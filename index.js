@@ -101,13 +101,15 @@ kazagumo.on('playerEmpty', (player) => {
     if (channel) {
         const embed = new EmbedBuilder()
             .setColor(0xFFFF00)
-            .setDescription('📭 Queue is empty! Add more songs or I will leave in 2 minutes.')
+            .setDescription('📭 Queue is empty! Add more songs to continue listening.')
             .setTimestamp();
 
         channel.send({ embeds: [embed] }).catch(console.error);
     }
 
-    // Auto leave after 2 minutes if queue is still empty
+    // Bot will stay in voice channel - no auto-leave
+    // If you want auto-leave, uncomment the code below and set your desired timeout
+    /*
     setTimeout(() => {
         if (player && player.queue.length === 0 && !player.playing) {
             player.destroy();
@@ -122,6 +124,7 @@ kazagumo.on('playerEmpty', (player) => {
             }
         }
     }, 120000);
+    */
 });
 
 kazagumo.on('playerDestroy', (player) => {
@@ -230,6 +233,10 @@ client.on(Events.ClientReady, async () => {
                     ]
                 }
             ]
+        },
+        {
+            name: 'join',
+            description: 'Join your voice channel and stay there'
         },
         {
             name: 'leave',
@@ -504,6 +511,41 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔁 Loop mode: **${modeText}**`)]
             });
+            break;
+        }
+
+        case 'join': {
+            if (!voiceChannel) {
+                return interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            try {
+                // Create player if doesn't exist
+                if (!player) {
+                    player = await kazagumo.createPlayer({
+                        guildId: guild.id,
+                        textId: channel.id,
+                        voiceId: voiceChannel.id,
+                        volume: 80,
+                        deaf: true
+                    });
+                }
+
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setDescription(`✅ Joined <#${voiceChannel.id}>! I will stay here until you use \`/leave\`.`)]
+                });
+            } catch (error) {
+                console.error('Join error:', error);
+                await interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription(`❌ Failed to join: ${error.message}`)],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
             break;
         }
 
