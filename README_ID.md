@@ -4,19 +4,48 @@
 
 ---
 
-Bot musik Discord dengan Lavalink untuk streaming audio berkualitas tinggi dari YouTube dan platform lainnya.
+Bot musik Discord dengan fitur lengkap, didukung oleh Lavalink untuk streaming audio berkualitas tinggi. Terinspirasi dari bot Boogie dengan panel player interaktif yang cantik!
 
 ## ✨ Fitur
 
-- 🎶 Play musik dari YouTube (search atau URL langsung)
-- 📋 Queue system dengan shuffle
-- 🔁 Loop mode (track / queue / off)
-- 🔊 Volume control
+### 🎶 Fitur Musik Utama
+- 🎵 Play musik dari YouTube (search atau URL langsung)
+- 📋 Sistem queue dengan shuffle
+- 🔁 Mode loop (track / queue / off)
+- 🔊 Kontrol volume (0-100%)
 - ⏯️ Pause, Resume, Skip, Stop
-- 📊 Now Playing dengan progress bar
-- 🚀 Auto-leave saat queue kosong
+- 📊 Now Playing dengan progress bar real-time
+- 🎧 Tetap di voice channel (tidak auto-leave)
 
-## 📋 Commands
+### 🎛️ Panel Player Interaktif (Gaya Boogie)
+- **Progress Bar Real-time** - Update setiap 10 detik menampilkan posisi saat ini
+- **Hitungan Queue Live** - Update langsung saat lagu ditambahkan
+- **Tombol Kontrol:**
+  - ⏮️ Restart Track
+  - ⏸️/▶️ Pause/Resume (ikon dinamis)
+  - ⏭️ Skip
+  - ⏹️ Stop
+  - 🔀 Shuffle
+  - 🔉/🔊 Volume Turun/Naik
+  - 🔁 Loop (berubah warna saat aktif)
+  - ❤️ Favorit
+  - 📋 Lihat Queue
+
+### 📀 Menu Dropdown
+- **Lihat Track Queue** - Jelajahi hingga 25 track dalam queue
+- **Fitur Lainnya:**
+  - 📍 Seek ke posisi (instruksi)
+  - 🎵 Info Now Playing detail
+  - 🗑️ Clear Queue
+  - 🔄 Restart Track
+  - 📊 Statistik Player
+
+### 🧹 Pengalaman Chat Bersih
+- Semua pesan bot otomatis terhapus setelah 5 detik
+- Panel player tetap ada (edit di tempat)
+- Tidak ada spam chat!
+
+## 📋 Slash Commands
 
 | Command | Deskripsi |
 |---------|-----------|
@@ -30,7 +59,29 @@ Bot musik Discord dengan Lavalink untuk streaming audio berkualitas tinggi dari 
 | `/volume <0-100>` | Atur volume |
 | `/shuffle` | Acak queue |
 | `/loop <mode>` | Loop: off / track / queue |
+| `/join` | Masuk voice channel dan tetap di sana |
 | `/leave` | Keluar dari voice channel |
+
+## 🎮 Preview Panel Player
+
+```
+🎧 Music Player
+─────────────────────────────────
+Judul Lagu
+
+Author: Nama Artis
+Requested by: Username
+
+▬▬▬▬▬🔘▬▬▬▬▬▬
+`1:45` / `4:31`
+
+🎶 Queue: 3 tracks remaining • Volume: 80% • ▶️ Playing
+─────────────────────────────────
+[⏮️] [⏸️] [⏭️] [⏹️] [🔀]
+[🔉] [🔊] [🔁] [❤️] [📋]
+[📀 View Queue Tracks (3)      ▼]
+[⚡ More Features...           ▼]
+```
 
 ## 🚀 Deployment ke Railway
 
@@ -71,7 +122,7 @@ LAVALINK_SECURE=false
    - ✅ MESSAGE CONTENT INTENT
 5. Di bagian **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
-   - Permissions: `Connect`, `Speak`, `Send Messages`, `Embed Links`
+   - Permissions: `Connect`, `Speak`, `Send Messages`, `Embed Links`, `Manage Messages`
 6. Copy URL dan invite bot ke server Anda
 
 ## 🖥️ Local Development
@@ -113,12 +164,13 @@ npm start
 
 ```
 Discord-Music/
-├── index.js          # Main bot file
+├── index.js          # Main bot file dengan panel player
 ├── package.json      # Dependencies
 ├── .env              # Environment variables (jangan di-commit!)
 ├── .env.example      # Template environment variables
 ├── .gitignore        # Git ignore rules
-└── README.md         # Dokumentasi
+├── README.md         # Dokumentasi English
+└── README_ID.md      # Dokumentasi Indonesia
 ```
 
 ## ⚙️ Konfigurasi Lavalink (Opsional)
@@ -166,6 +218,24 @@ logging:
 - Tunggu beberapa menit, Discord caching slash commands
 - Pastikan bot memiliki permission `applications.commands`
 
+### Pesan tidak otomatis terhapus
+- Pastikan bot memiliki permission `Manage Messages`
+
+### Panel player tidak update
+- Player update setiap 10 detik saat bermain
+- Update berhenti saat musik di-pause
+
+## 🆕 Yang Baru
+
+### v2.0 - Panel Player Interaktif
+- ✨ Panel player interaktif gaya Boogie dengan tombol-tombol
+- 📊 Progress bar real-time (update setiap 10 detik)
+- 🔘 Tombol kontrol untuk semua fungsi playback
+- 📀 Menu dropdown untuk queue dan fitur tambahan
+- 🧹 Pesan otomatis terhapus setelah 5 detik
+- 🔄 Player edit di tempat (tidak ada pesan "message deleted")
+- 📋 Update hitungan queue secara live
+
 ## 📄 License
 
 ISC
@@ -173,3 +243,7 @@ ISC
 ## 🤝 Contributing
 
 Pull requests welcome! Untuk perubahan besar, buka issue terlebih dahulu.
+
+---
+
+Dibuat dengan ❤️ untuk pecinta musik Discord

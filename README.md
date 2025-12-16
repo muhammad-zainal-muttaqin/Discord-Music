@@ -4,19 +4,48 @@
 
 ---
 
-A Discord music bot powered by Lavalink for high-quality audio streaming from YouTube and other platforms.
+A feature-rich Discord music bot powered by Lavalink for high-quality audio streaming. Inspired by Boogie bot with a beautiful interactive player panel!
 
 ## ✨ Features
 
-- 🎶 Play music from YouTube (search or direct URL)
-- 📋 Queue system with shuffle
-- 🔁 Loop mode (track / queue / off)
-- 🔊 Volume control
+### 🎶 Core Music Features
+- 🎵 Play music from YouTube (search or direct URL)
+- 📋 Queue system with shuffle support
+- 🔁 Loop modes (track / queue / off)
+- 🔊 Volume control (0-100%)
 - ⏯️ Pause, Resume, Skip, Stop
-- 📊 Now Playing with progress bar
-- 🚀 Auto-leave when queue is empty
+- 📊 Now Playing with real-time progress bar
+- 🎧 Stay in voice channel (no auto-leave)
 
-## 📋 Commands
+### 🎛️ Interactive Player Panel (Boogie-style)
+- **Real-time Progress Bar** - Updates every 10 seconds showing current position
+- **Live Queue Count** - Updates instantly when songs are added
+- **Control Buttons:**
+  - ⏮️ Restart Track
+  - ⏸️/▶️ Pause/Resume (dynamic icon)
+  - ⏭️ Skip
+  - ⏹️ Stop
+  - 🔀 Shuffle
+  - 🔉/🔊 Volume Down/Up
+  - 🔁 Loop (changes color when active)
+  - ❤️ Favorite
+  - 📋 View Queue
+
+### 📀 Dropdown Menus
+- **View Queue Tracks** - Browse up to 25 tracks in queue
+- **More Features:**
+  - 📍 Seek to position (instructions)
+  - 🎵 Detailed Now Playing info
+  - 🗑️ Clear Queue
+  - 🔄 Restart Track
+  - 📊 Player Statistics
+
+### 🧹 Clean Chat Experience
+- All bot messages auto-delete after 5 seconds
+- Player panel stays persistent (edits in-place)
+- No chat clutter!
+
+## 📋 Slash Commands
 
 | Command | Description |
 |---------|-------------|
@@ -30,7 +59,29 @@ A Discord music bot powered by Lavalink for high-quality audio streaming from Yo
 | `/volume <0-100>` | Set the volume |
 | `/shuffle` | Shuffle the queue |
 | `/loop <mode>` | Loop: off / track / queue |
+| `/join` | Join voice channel and stay |
 | `/leave` | Leave the voice channel |
+
+## 🎮 Player Panel Preview
+
+```
+🎧 Music Player
+─────────────────────────────────
+Song Title
+
+Author: Artist Name
+Requested by: Username
+
+▬▬▬▬▬🔘▬▬▬▬▬▬
+`1:45` / `4:31`
+
+🎶 Queue: 3 tracks remaining • Volume: 80% • ▶️ Playing
+─────────────────────────────────
+[⏮️] [⏸️] [⏭️] [⏹️] [🔀]
+[🔉] [🔊] [🔁] [❤️] [📋]
+[📀 View Queue Tracks (3)      ▼]
+[⚡ More Features...           ▼]
+```
 
 ## 🚀 Deployment to Railway
 
@@ -71,7 +122,7 @@ LAVALINK_SECURE=false
    - ✅ MESSAGE CONTENT INTENT
 5. In **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
-   - Permissions: `Connect`, `Speak`, `Send Messages`, `Embed Links`
+   - Permissions: `Connect`, `Speak`, `Send Messages`, `Embed Links`, `Manage Messages`
 6. Copy the URL and invite the bot to your server
 
 ## 🖥️ Local Development
@@ -113,12 +164,13 @@ npm start
 
 ```
 Discord-Music/
-├── index.js          # Main bot file
+├── index.js          # Main bot file with player panel
 ├── package.json      # Dependencies
 ├── .env              # Environment variables (do not commit!)
 ├── .env.example      # Template environment variables
 ├── .gitignore        # Git ignore rules
-└── README.md         # Documentation
+├── README.md         # English documentation
+└── README_ID.md      # Indonesian documentation
 ```
 
 ## ⚙️ Lavalink Configuration (Optional)
@@ -166,6 +218,24 @@ logging:
 - Wait a few minutes, Discord caches slash commands
 - Make sure the bot has `applications.commands` permission
 
+### Messages not auto-deleting
+- Ensure the bot has `Manage Messages` permission
+
+### Player panel not updating
+- The player updates every 10 seconds while playing
+- Updates pause when music is paused
+
+## 🆕 What's New
+
+### v2.0 - Interactive Player Panel
+- ✨ Boogie-style interactive player with buttons
+- 📊 Real-time progress bar (updates every 10 seconds)
+- 🔘 Control buttons for all playback functions
+- 📀 Dropdown menus for queue and extra features
+- 🧹 Auto-delete messages after 5 seconds
+- 🔄 Player edits in-place (no "message deleted" notices)
+- 📋 Live queue count updates
+
 ## 📄 License
 
 ISC
@@ -173,3 +243,7 @@ ISC
 ## 🤝 Contributing
 
 Pull requests are welcome! For major changes, please open an issue first.
+
+---
+
+Made with ❤️ for Discord music lovers
