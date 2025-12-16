@@ -271,6 +271,18 @@ function clearPlayerInterval(guildId) {
     }
 }
 
+// Helper function to send a reply that auto-deletes after 5 seconds
+async function sendAutoDeleteReply(interaction, embed) {
+    try {
+        await interaction.reply({ embeds: [embed] });
+        setTimeout(() => {
+            interaction.deleteReply().catch(() => { });
+        }, 5000);
+    } catch (error) {
+        console.error('Failed to send reply:', error.message);
+    }
+}
+
 // Player Events
 kazagumo.on('playerStart', async (player, track) => {
     // Immediately clear any existing interval
@@ -867,19 +879,17 @@ client.on(Events.InteractionCreate, async interaction => {
     const player = kazagumo.players.get(guild.id);
 
     if (!player) {
-        return interaction.reply({
-            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')],
-            flags: MessageFlags.Ephemeral
-        });
+        return sendAutoDeleteReply(interaction,
+            new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')
+        );
     }
 
     // Check if user is in voice channel
     const voiceChannel = member.voice.channel;
     if (!voiceChannel) {
-        return interaction.reply({
-            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')],
-            flags: MessageFlags.Ephemeral
-        });
+        return sendAutoDeleteReply(interaction,
+            new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')
+        );
     }
 
     switch (customId) {
@@ -887,10 +897,9 @@ client.on(Events.InteractionCreate, async interaction => {
             // Go to beginning of current song (there's no previous track in Kazagumo by default)
             if (player.queue.current) {
                 player.seek(0);
-                await interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')
+                );
                 // Update player to show 0:00 position
                 updatePlayerMessage(player);
             }
@@ -901,18 +910,16 @@ client.on(Events.InteractionCreate, async interaction => {
                 player.pause(false);
                 // Restart the update interval when resuming
                 startPlayerInterval(player);
-                await interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
+                );
             } else {
                 player.pause(true);
                 // Stop updates while paused (saves resources)
                 clearPlayerInterval(player.guildId);
-                await interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')
+                );
             }
             // Update player to show paused/playing state and button icon
             updatePlayerMessage(player);
@@ -920,10 +927,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         case 'player_skip':
             player.skip();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
+            );
             break;
 
         case 'player_stop':
@@ -936,24 +942,21 @@ client.on(Events.InteractionCreate, async interaction => {
                 playerMessages.delete(guild.id);
             }
             player.destroy();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and left the channel!')],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and left the channel!')
+            );
             break;
 
         case 'player_shuffle':
             if (player.queue.length < 2) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Need at least 2 songs to shuffle!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Need at least 2 songs to shuffle!')
+                );
             }
             player.queue.shuffle();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')
+            );
             // Update player to show shuffled queue
             updatePlayerMessage(player);
             break;
@@ -961,10 +964,9 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_voldown':
             const newVolDown = Math.max(0, player.volume - 10);
             player.setVolume(newVolDown);
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)
+            );
             // Update player to show new volume
             updatePlayerMessage(player);
             break;
@@ -972,10 +974,9 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_volup':
             const newVolUp = Math.min(100, player.volume + 10);
             player.setVolume(newVolUp);
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)
+            );
             // Update player to show new volume
             updatePlayerMessage(player);
             break;
@@ -986,20 +987,18 @@ client.on(Events.InteractionCreate, async interaction => {
             const nextMode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
             player.setLoop(nextMode);
             const modeEmoji = nextMode === 'none' ? '➡️ Off' : nextMode === 'track' ? '🔂 Track' : '🔁 Queue';
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)],
-                flags: MessageFlags.Ephemeral
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)
+            );
             // Update player to show loop button color change
             updatePlayerMessage(player);
             break;
 
         case 'player_queue':
             if (player.queue.length === 0) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 Queue is empty!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 Queue is empty!')
+                );
             }
 
             const current = player.queue.current;
@@ -1018,26 +1017,24 @@ client.on(Events.InteractionCreate, async interaction => {
                 description += `\n...and ${player.queue.length - 5} more`;
             }
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder()
                     .setColor(0x5865F2)
                     .setTitle('📋 Queue')
-                    .setDescription(description)],
-                flags: MessageFlags.Ephemeral
-            });
+                    .setDescription(description)
+            );
             break;
 
         case 'player_favorite':
             // Show a nice message (you could implement actual favorites storage later)
             const favTrack = player.queue.current;
             if (favTrack) {
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0xFF69B4)
                         .setDescription(`❤️ **${favTrack.title}** added to your favorites!`)
-                        .setFooter({ text: 'Tip: This is a placeholder - implement storage for persistent favorites!' })],
-                    flags: MessageFlags.Ephemeral
-                });
+                        .setFooter({ text: 'Tip: This is a placeholder - implement storage for persistent favorites!' })
+                );
             }
             break;
     }
@@ -1053,27 +1050,25 @@ client.on(Events.InteractionCreate, async interaction => {
     const player = kazagumo.players.get(guild.id);
 
     if (!player) {
-        return interaction.reply({
-            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')],
-            flags: MessageFlags.Ephemeral
-        });
+        return sendAutoDeleteReply(interaction,
+            new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')
+        );
     }
 
     // Handle Track Selection
     if (customId === 'player_tracks') {
         if (selectedValue === 'no_tracks') {
-            return interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 No tracks in queue! Use `/play` to add songs.')],
-                flags: MessageFlags.Ephemeral
-            });
+            return sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 No tracks in queue! Use `/play` to add songs.')
+            );
         }
 
         const trackIndex = parseInt(selectedValue.replace('track_', ''));
         const selectedTrack = player.queue[trackIndex];
 
         if (selectedTrack) {
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder()
                     .setColor(0x5865F2)
                     .setTitle(`📀 Track #${trackIndex + 1}`)
                     .setDescription(`**[${selectedTrack.title}](${selectedTrack.uri})**`)
@@ -1082,9 +1077,8 @@ client.on(Events.InteractionCreate, async interaction => {
                         { name: 'Duration', value: formatDuration(selectedTrack.length), inline: true },
                         { name: 'Requested by', value: selectedTrack.requester?.tag || 'Unknown', inline: true }
                     )
-                    .setThumbnail(selectedTrack.thumbnail || null)],
-                flags: MessageFlags.Ephemeral
-            });
+                    .setThumbnail(selectedTrack.thumbnail || null)
+            );
         }
         return;
     }
@@ -1093,14 +1087,13 @@ client.on(Events.InteractionCreate, async interaction => {
     if (customId === 'player_features') {
         switch (selectedValue) {
             case 'feature_seek':
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0x5865F2)
                         .setTitle('📍 Seek to Position')
                         .setDescription('Use the `/seek` command to jump to a specific time!\n\n**Examples:**\n• `/seek 1:30` - Jump to 1 minute 30 seconds\n• `/seek 0:45` - Jump to 45 seconds')
-                        .setFooter({ text: 'Note: Seek command needs to be implemented separately' })],
-                    flags: MessageFlags.Ephemeral
-                });
+                        .setFooter({ text: 'Note: Seek command needs to be implemented separately' })
+                );
                 break;
 
             case 'feature_nowplaying':
@@ -1110,8 +1103,8 @@ client.on(Events.InteractionCreate, async interaction => {
                     const duration = track.length;
                     const progressBar = createProgressBar(position, duration, 20);
 
-                    await interaction.reply({
-                        embeds: [new EmbedBuilder()
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder()
                             .setColor(0x5865F2)
                             .setTitle('🎵 Now Playing - Detailed Info')
                             .setDescription(`**[${track.title}](${track.uri})**\n\n${progressBar}\n\`${formatDuration(position)}\` / \`${formatDuration(duration)}\``)
@@ -1124,39 +1117,40 @@ client.on(Events.InteractionCreate, async interaction => {
                                 { name: '⏱️ Position', value: `${formatDuration(position)} / ${formatDuration(duration)}`, inline: true }
                             )
                             .setThumbnail(track.thumbnail || null)
-                            .setImage(track.thumbnail || null)],
-                        flags: MessageFlags.Ephemeral
-                    });
+                            .setImage(track.thumbnail || null)
+                    );
                 }
                 break;
 
             case 'feature_clear':
                 const queueLength = player.queue.length;
                 player.queue.clear();
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0xFF0000)
-                        .setDescription(`🗑️ Cleared **${queueLength}** tracks from the queue!`)],
-                    flags: MessageFlags.Ephemeral
-                });
+                        .setDescription(`🗑️ Cleared **${queueLength}** tracks from the queue!`)
+                );
+                // Update player message
+                updatePlayerMessage(player);
                 break;
 
             case 'feature_restart':
                 player.seek(0);
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0x00FF00)
-                        .setDescription('🔄 Restarted the current track!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                        .setDescription('🔄 Restarted the current track!')
+                );
+                // Update player message
+                updatePlayerMessage(player);
                 break;
 
             case 'feature_stats':
                 const statsTrack = player.queue.current;
                 const totalQueueDuration = player.queue.reduce((acc, t) => acc + t.length, 0);
 
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0x5865F2)
                         .setTitle('📊 Player Statistics')
                         .setDescription('Current player settings and information')
@@ -1169,9 +1163,8 @@ client.on(Events.InteractionCreate, async interaction => {
                             { name: '⏱️ Total Queue Duration', value: formatDuration(totalQueueDuration), inline: true },
                             { name: '🎧 Voice Channel', value: `<#${player.voiceId}>`, inline: true }
                         )
-                        .setFooter({ text: `Guild ID: ${player.guildId}` })],
-                    flags: MessageFlags.Ephemeral
-                });
+                        .setFooter({ text: `Guild ID: ${player.guildId}` })
+                );
                 break;
         }
     }
