@@ -12,7 +12,7 @@ process.on('uncaughtException', error => {
     console.error('Uncaught Exception:', error);
 });
 
-// Graceful shutdown handling (untuk Railway redeploy)
+// Graceful shutdown handling (for Railway redeploy)
 process.on('SIGTERM', () => {
     console.log('📴 Received SIGTERM, shutting down gracefully...');
     process.exit(0);

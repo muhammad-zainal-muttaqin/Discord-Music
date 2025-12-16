@@ -1,49 +1,53 @@
 # 🎵 Discord Music Bot
 
-Bot musik Discord dengan Lavalink untuk streaming audio berkualitas tinggi dari YouTube dan platform lainnya.
+**🌐 Language: [English](README.md) | [Indonesia](README_ID.md)**
 
-## ✨ Fitur
+---
 
-- 🎶 Play musik dari YouTube (search atau URL langsung)
-- 📋 Queue system dengan shuffle
+A Discord music bot powered by Lavalink for high-quality audio streaming from YouTube and other platforms.
+
+## ✨ Features
+
+- 🎶 Play music from YouTube (search or direct URL)
+- 📋 Queue system with shuffle
 - 🔁 Loop mode (track / queue / off)
 - 🔊 Volume control
 - ⏯️ Pause, Resume, Skip, Stop
-- 📊 Now Playing dengan progress bar
-- 🚀 Auto-leave saat queue kosong
+- 📊 Now Playing with progress bar
+- 🚀 Auto-leave when queue is empty
 
 ## 📋 Commands
 
-| Command | Deskripsi |
-|---------|-----------|
-| `/play <query>` | Play lagu dari YouTube |
-| `/skip` | Skip lagu saat ini |
-| `/stop` | Stop dan hapus queue |
-| `/pause` | Pause lagu |
-| `/resume` | Resume lagu |
-| `/queue` | Lihat antrian lagu |
-| `/nowplaying` | Info lagu yang sedang diputar |
-| `/volume <0-100>` | Atur volume |
-| `/shuffle` | Acak queue |
+| Command | Description |
+|---------|-------------|
+| `/play <query>` | Play a song from YouTube |
+| `/skip` | Skip the current song |
+| `/stop` | Stop playback and clear the queue |
+| `/pause` | Pause the song |
+| `/resume` | Resume the song |
+| `/queue` | View the song queue |
+| `/nowplaying` | Show info about the currently playing song |
+| `/volume <0-100>` | Set the volume |
+| `/shuffle` | Shuffle the queue |
 | `/loop <mode>` | Loop: off / track / queue |
-| `/leave` | Keluar dari voice channel |
+| `/leave` | Leave the voice channel |
 
-## 🚀 Deployment ke Railway
+## 🚀 Deployment to Railway
 
-### Langkah 1: Deploy Lavalink Server
+### Step 1: Deploy Lavalink Server
 
-1. Buka [Railway Lavalink Template](https://railway.com/template/lavalink)
-2. Klik **Deploy Now**
+1. Open [Railway Lavalink Template](https://railway.com/template/lavalink)
+2. Click **Deploy Now**
 3. Set environment variable:
-   - `PASSWORD`: Password untuk autentikasi (contoh: `mysecretpassword`)
-4. Tunggu deployment selesai
-5. Catat **internal hostname** dari service Lavalink (format: `lavalink.railway.internal`)
+   - `PASSWORD`: Password for authentication (e.g., `mysecretpassword`)
+4. Wait for deployment to complete
+5. Note down the **internal hostname** of the Lavalink service (format: `lavalink.railway.internal`)
 
-### Langkah 2: Deploy Discord Bot
+### Step 2: Deploy Discord Bot
 
-1. Fork atau push repository ini ke GitHub
-2. Di Railway, buat **New Project** → **Deploy from GitHub repo**
-3. Pilih repository ini
+1. Fork or push this repository to GitHub
+2. In Railway, create a **New Project** → **Deploy from GitHub repo**
+3. Select this repository
 4. Set environment variables:
 
 ```
@@ -53,33 +57,33 @@ LAVALINK_PASSWORD=mysecretpassword
 LAVALINK_SECURE=false
 ```
 
-> **Note**: Ganti `lavalink.railway.internal` dengan hostname internal dari Lavalink service Anda.
+> **Note**: Replace `lavalink.railway.internal` with the internal hostname of your Lavalink service.
 
 5. Deploy!
 
-### Langkah 3: Setup Discord Bot
+### Step 3: Setup Discord Bot
 
-1. Buka [Discord Developer Portal](https://discord.com/developers/applications)
-2. Buat aplikasi baru atau gunakan yang sudah ada
-3. Di bagian **Bot**, copy token dan paste ke `DISCORD_TOKEN`
+1. Open [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create a new application or use an existing one
+3. In the **Bot** section, copy the token and paste it into `DISCORD_TOKEN`
 4. Enable intents:
    - ✅ SERVER MEMBERS INTENT
    - ✅ MESSAGE CONTENT INTENT
-5. Di bagian **OAuth2 → URL Generator**:
+5. In **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Permissions: `Connect`, `Speak`, `Send Messages`, `Embed Links`
-6. Copy URL dan invite bot ke server Anda
+6. Copy the URL and invite the bot to your server
 
 ## 🖥️ Local Development
 
 ### Prerequisites
 - Node.js 18+
-- Java 17+ (untuk Lavalink)
-- Lavalink server berjalan
+- Java 17+ (for Lavalink)
+- Lavalink server running
 
 ### Setup
 
-1. Clone repository
+1. Clone the repository
 ```bash
 git clone <your-repo-url>
 cd Discord-Music
@@ -90,36 +94,36 @@ cd Discord-Music
 npm install
 ```
 
-3. Copy `.env.example` ke `.env` dan isi nilai-nilainya
+3. Copy `.env.example` to `.env` and fill in the values
 ```bash
 cp .env.example .env
 ```
 
-4. Jalankan Lavalink server (di terminal terpisah)
+4. Run Lavalink server (in a separate terminal)
 ```bash
 java -jar Lavalink.jar
 ```
 
-5. Jalankan bot
+5. Run the bot
 ```bash
 npm start
 ```
 
-## 📁 Struktur Proyek
+## 📁 Project Structure
 
 ```
 Discord-Music/
 ├── index.js          # Main bot file
 ├── package.json      # Dependencies
-├── .env              # Environment variables (jangan di-commit!)
+├── .env              # Environment variables (do not commit!)
 ├── .env.example      # Template environment variables
 ├── .gitignore        # Git ignore rules
-└── README.md         # Dokumentasi
+└── README.md         # Documentation
 ```
 
-## ⚙️ Konfigurasi Lavalink (Opsional)
+## ⚙️ Lavalink Configuration (Optional)
 
-Jika Anda menjalankan Lavalink server sendiri, buat file `application.yml`:
+If you're running your own Lavalink server, create an `application.yml` file:
 
 ```yaml
 server:
@@ -149,18 +153,18 @@ logging:
 
 ## 🔧 Troubleshooting
 
-### Bot tidak bisa connect ke Lavalink
-- Pastikan Lavalink server berjalan
-- Cek `LAVALINK_HOST` dan `LAVALINK_PASSWORD` sudah benar
-- Di Railway, gunakan **internal URL** bukan public URL
+### Bot can't connect to Lavalink
+- Make sure the Lavalink server is running
+- Check that `LAVALINK_HOST` and `LAVALINK_PASSWORD` are correct
+- On Railway, use the **internal URL**, not the public URL
 
-### Lagu tidak bisa diputar
-- YouTube mungkin memblokir. Pastikan Lavalink menggunakan `youtube-plugin` terbaru
-- Cek logs Lavalink untuk error detail
+### Songs won't play
+- YouTube might be blocking requests. Ensure Lavalink is using the latest `youtube-plugin`
+- Check Lavalink logs for detailed errors
 
-### Commands tidak muncul
-- Tunggu beberapa menit, Discord caching slash commands
-- Pastikan bot memiliki permission `applications.commands`
+### Commands don't appear
+- Wait a few minutes, Discord caches slash commands
+- Make sure the bot has `applications.commands` permission
 
 ## 📄 License
 
@@ -168,4 +172,4 @@ ISC
 
 ## 🤝 Contributing
 
-Pull requests welcome! Untuk perubahan besar, buka issue terlebih dahulu.
+Pull requests are welcome! For major changes, please open an issue first.
