@@ -252,12 +252,12 @@ function startPlayerInterval(player) {
     // Clear any existing interval
     clearPlayerInterval(player.guildId);
 
-    // Update every 5 seconds
+    // Update every 10 seconds
     const interval = setInterval(() => {
         if (player && player.queue.current && !player.paused) {
             updatePlayerMessage(player);
         }
-    }, 5000);
+    }, 10000);
 
     playerIntervals.set(player.guildId, interval);
 }
@@ -273,6 +273,9 @@ function clearPlayerInterval(guildId) {
 
 // Player Events
 kazagumo.on('playerStart', async (player, track) => {
+    // Immediately clear any existing interval
+    clearPlayerInterval(player.guildId);
+
     const channel = client.channels.cache.get(player.textId);
     if (channel) {
         // 1. Send brief "Now Playing" notification (auto-deletes after 5 seconds)
@@ -290,27 +293,48 @@ kazagumo.on('playerStart', async (player, track) => {
             })
             .catch(console.error);
 
-        // 2. Delete previous player message if exists
-        const oldPlayerMsg = playerMessages.get(player.guildId);
-        if (oldPlayerMsg) {
-            oldPlayerMsg.delete().catch(() => { });
-        }
-
-        // 3. Build and send the player panel
+        // 2. Build the player panel
         const playerEmbed = buildPlayerEmbed(player, track);
         const components = buildPlayerComponents(player);
 
-        try {
-            const playerMsg = await channel.send({
-                embeds: [playerEmbed],
-                components
-            });
-            playerMessages.set(player.guildId, playerMsg);
+        // 3. Check if player message already exists - EDIT it instead of recreating
+        const existingPlayerMsg = playerMessages.get(player.guildId);
 
-            // 4. Start the real-time update interval (every 5 seconds)
-            startPlayerInterval(player);
-        } catch (error) {
-            console.error('Failed to send player message:', error);
+        if (existingPlayerMsg) {
+            // Edit existing message for instant update (no delete/recreate delay)
+            try {
+                await existingPlayerMsg.edit({
+                    embeds: [playerEmbed],
+                    components
+                });
+                // Start the real-time update interval
+                startPlayerInterval(player);
+            } catch (error) {
+                // Message might have been deleted, create a new one
+                console.error('Failed to edit player message, creating new one:', error.message);
+                try {
+                    const playerMsg = await channel.send({
+                        embeds: [playerEmbed],
+                        components
+                    });
+                    playerMessages.set(player.guildId, playerMsg);
+                    startPlayerInterval(player);
+                } catch (sendError) {
+                    console.error('Failed to send player message:', sendError);
+                }
+            }
+        } else {
+            // No existing message, create new one
+            try {
+                const playerMsg = await channel.send({
+                    embeds: [playerEmbed],
+                    components
+                });
+                playerMessages.set(player.guildId, playerMsg);
+                startPlayerInterval(player);
+            } catch (error) {
+                console.error('Failed to send player message:', error);
+            }
         }
     }
 });
@@ -546,11 +570,16 @@ client.on(Events.InteractionCreate, async interaction => {
                         player.queue.add(track);
                     }
 
-                    await interaction.editReply({
+                    const reply = await interaction.editReply({
                         embeds: [new EmbedBuilder()
                             .setColor(0x00FF00)
                             .setDescription(`📋 Added **${result.tracks.length}** tracks from playlist: **${result.playlistName}**`)]
                     });
+
+                    // Auto-delete after 5 seconds
+                    setTimeout(() => {
+                        interaction.deleteReply().catch(() => { });
+                    }, 5000);
 
                     // Update the player message with new queue count
                     if (player.playing) {
@@ -567,6 +596,11 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .setDescription(`✅ Added to queue: **[${result.tracks[0].title}](${result.tracks[0].uri})**`)]
                         });
 
+                        // Auto-delete after 5 seconds
+                        setTimeout(() => {
+                            interaction.deleteReply().catch(() => { });
+                        }, 5000);
+
                         // Update the player message with new queue count
                         updatePlayerMessage(player);
                     } else {
@@ -575,6 +609,11 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .setColor(0x00FF00)
                                 .setDescription(`🎵 Starting playback...`)]
                         });
+
+                        // Auto-delete after 5 seconds
+                        setTimeout(() => {
+                            interaction.deleteReply().catch(() => { });
+                        }, 5000);
                     }
                 }
 
