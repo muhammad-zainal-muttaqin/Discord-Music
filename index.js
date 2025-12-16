@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Events, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Events, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Shoukaku, Connectors } = require('shoukaku');
 const { Kazagumo, Plugins } = require('kazagumo');
 require('dotenv').config();
@@ -83,23 +83,175 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
     }
 });
 
+// Store player messages to update/delete them later
+const playerMessages = new Map();
+
+// Helper function to create progress bar
+function createProgressBar(current, total, length = 12) {
+    const progress = Math.round((current / total) * length);
+    const empty = length - progress;
+    const progressBar = '▬'.repeat(Math.max(0, progress)) + '🔘' + '▬'.repeat(Math.max(0, empty - 1));
+    return progressBar;
+}
+
 // Player Events
-kazagumo.on('playerStart', (player, track) => {
+kazagumo.on('playerStart', async (player, track) => {
     const channel = client.channels.cache.get(player.textId);
     if (channel) {
-        const embed = new EmbedBuilder()
+        // 1. Send brief "Now Playing" notification (auto-deletes after 5 seconds)
+        const notificationEmbed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('🎵 Now Playing')
             .setDescription(`**[${track.title}](${track.uri})**`)
-            .addFields(
-                { name: 'Duration', value: formatDuration(track.length), inline: true },
-                { name: 'Author', value: track.author || 'Unknown', inline: true },
-                { name: 'Requested by', value: track.requester?.tag || 'Unknown', inline: true }
+            .setThumbnail(track.thumbnail || null);
+
+        channel.send({ embeds: [notificationEmbed] })
+            .then(msg => {
+                setTimeout(() => {
+                    msg.delete().catch(() => { });
+                }, 5000);
+            })
+            .catch(console.error);
+
+        // 2. Delete previous player message if exists
+        const oldPlayerMsg = playerMessages.get(player.guildId);
+        if (oldPlayerMsg) {
+            oldPlayerMsg.delete().catch(() => { });
+        }
+
+        // 3. Create progress bar (starts at 0:00)
+        const progressBar = createProgressBar(0, track.length);
+
+        // 4. Send persistent player panel with control buttons
+        const playerEmbed = new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setAuthor({ name: '🎧 Music Player', iconURL: track.requester?.displayAvatarURL?.() || null })
+            .setTitle(track.title)
+            .setURL(track.uri)
+            .setDescription(
+                `**Author:** ${track.author || 'Unknown'}\n` +
+                `**Requested by:** ${track.requester?.tag || 'Unknown'}\n\n` +
+                `${progressBar}\n` +
+                `\`0:00\` / \`${formatDuration(track.length)}\``
             )
             .setThumbnail(track.thumbnail || null)
-            .setTimestamp();
+            .setFooter({ text: `🎶 Queue: ${player.queue.length} tracks remaining • Volume: ${player.volume}%` });
 
-        channel.send({ embeds: [embed] }).catch(console.error);
+        // Row 1: Main playback controls
+        const controlButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('player_previous')
+                    .setEmoji('⏮️')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_pause')
+                    .setEmoji('⏸️')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('player_skip')
+                    .setEmoji('⏭️')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_stop')
+                    .setEmoji('⏹️')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId('player_shuffle')
+                    .setEmoji('🔀')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        // Row 2: Volume and loop controls
+        const volumeButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('player_voldown')
+                    .setEmoji('🔉')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_volup')
+                    .setEmoji('🔊')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_loop')
+                    .setEmoji('🔁')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_favorite')
+                    .setEmoji('❤️')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('player_queue')
+                    .setEmoji('📋')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        // Row 3: Track selection dropdown (shows queue)
+        const trackDropdown = new ActionRowBuilder()
+            .addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('player_tracks')
+                    .setPlaceholder('📀 View Queue Tracks')
+                    .addOptions(
+                        player.queue.length > 0
+                            ? player.queue.slice(0, 25).map((t, i) =>
+                                new StringSelectMenuOptionBuilder()
+                                    .setLabel(`${i + 1}. ${t.title.substring(0, 90)}`)
+                                    .setDescription(`${t.author || 'Unknown'} • ${formatDuration(t.length)}`)
+                                    .setValue(`track_${i}`)
+                            )
+                            : [new StringSelectMenuOptionBuilder()
+                                .setLabel('No tracks in queue')
+                                .setDescription('Use /play to add more songs!')
+                                .setValue('no_tracks')]
+                    )
+            );
+
+        // Row 4: More Features dropdown
+        const featuresDropdown = new ActionRowBuilder()
+            .addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('player_features')
+                    .setPlaceholder('⚡ More Features...')
+                    .addOptions(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('📍 Seek to position')
+                            .setDescription('Jump to a specific time in the track')
+                            .setValue('feature_seek')
+                            .setEmoji('📍'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('🎵 Now Playing Info')
+                            .setDescription('Get detailed track information')
+                            .setValue('feature_nowplaying')
+                            .setEmoji('🎵'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('🗑️ Clear Queue')
+                            .setDescription('Remove all tracks from the queue')
+                            .setValue('feature_clear')
+                            .setEmoji('🗑️'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('🔄 Restart Track')
+                            .setDescription('Play the current track from the beginning')
+                            .setValue('feature_restart')
+                            .setEmoji('🔄'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('📊 Player Stats')
+                            .setDescription('View player statistics and settings')
+                            .setValue('feature_stats')
+                            .setEmoji('📊')
+                    )
+            );
+
+        try {
+            const playerMsg = await channel.send({
+                embeds: [playerEmbed],
+                components: [controlButtons, volumeButtons, trackDropdown, featuresDropdown]
+            });
+            playerMessages.set(player.guildId, playerMsg);
+        } catch (error) {
+            console.error('Failed to send player message:', error);
+        }
     }
 });
 
@@ -115,7 +267,14 @@ kazagumo.on('playerEmpty', (player) => {
             .setDescription('📭 Queue is empty! Add more songs to continue listening.')
             .setTimestamp();
 
-        channel.send({ embeds: [embed] }).catch(console.error);
+        channel.send({ embeds: [embed] })
+            .then(msg => {
+                // Auto-delete after 5 seconds
+                setTimeout(() => {
+                    msg.delete().catch(() => { });
+                }, 5000);
+            })
+            .catch(console.error);
     }
 
     // Bot will stay in voice channel - no auto-leave
@@ -573,6 +732,310 @@ client.on(Events.InteractionCreate, async interaction => {
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('👋 Left the voice channel!')]
             });
             break;
+        }
+    }
+});
+
+// Handle Button Interactions (Player Controls)
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+
+    const { customId, guild, member } = interaction;
+
+    // Only handle player buttons
+    if (!customId.startsWith('player_')) return;
+
+    const player = kazagumo.players.get(guild.id);
+
+    if (!player) {
+        return interaction.reply({
+            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')],
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    // Check if user is in voice channel
+    const voiceChannel = member.voice.channel;
+    if (!voiceChannel) {
+        return interaction.reply({
+            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')],
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    switch (customId) {
+        case 'player_previous':
+            // Go to beginning of current song (there's no previous track in Kazagumo by default)
+            if (player.queue.current) {
+                player.seek(0);
+                await interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+            break;
+
+        case 'player_pause':
+            if (player.paused) {
+                player.pause(false);
+                await interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            } else {
+                player.pause(true);
+                await interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+            break;
+
+        case 'player_skip':
+            player.skip();
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_stop':
+            // Delete player message
+            const playerMsg = playerMessages.get(guild.id);
+            if (playerMsg) {
+                playerMsg.delete().catch(() => { });
+                playerMessages.delete(guild.id);
+            }
+            player.destroy();
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and left the channel!')],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_shuffle':
+            if (player.queue.length < 2) {
+                return interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Need at least 2 songs to shuffle!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+            player.queue.shuffle();
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_voldown':
+            const newVolDown = Math.max(0, player.volume - 10);
+            player.setVolume(newVolDown);
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_volup':
+            const newVolUp = Math.min(100, player.volume + 10);
+            player.setVolume(newVolUp);
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_loop':
+            const modes = ['none', 'track', 'queue'];
+            const currentMode = player.loop || 'none';
+            const nextMode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
+            player.setLoop(nextMode);
+            const modeEmoji = nextMode === 'none' ? '➡️ Off' : nextMode === 'track' ? '🔂 Track' : '🔁 Queue';
+            await interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_queue':
+            if (player.queue.length === 0) {
+                return interaction.reply({
+                    embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 Queue is empty!')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            const current = player.queue.current;
+            const tracks = player.queue.slice(0, 5);
+
+            let description = `**Now Playing:**\n[${current.title}](${current.uri})\n\n`;
+
+            if (tracks.length > 0) {
+                description += '**Up Next:**\n';
+                tracks.forEach((track, index) => {
+                    description += `${index + 1}. ${track.title}\n`;
+                });
+            }
+
+            if (player.queue.length > 5) {
+                description += `\n...and ${player.queue.length - 5} more`;
+            }
+
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor(0x5865F2)
+                    .setTitle('📋 Queue')
+                    .setDescription(description)],
+                flags: MessageFlags.Ephemeral
+            });
+            break;
+
+        case 'player_favorite':
+            // Show a nice message (you could implement actual favorites storage later)
+            const favTrack = player.queue.current;
+            if (favTrack) {
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0xFF69B4)
+                        .setDescription(`❤️ **${favTrack.title}** added to your favorites!`)
+                        .setFooter({ text: 'Tip: This is a placeholder - implement storage for persistent favorites!' })],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+            break;
+    }
+});
+
+// Handle Select Menu Interactions (Dropdowns)
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isStringSelectMenu()) return;
+
+    const { customId, guild, member, values } = interaction;
+    const selectedValue = values[0];
+
+    const player = kazagumo.players.get(guild.id);
+
+    if (!player) {
+        return interaction.reply({
+            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No music is playing!')],
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    // Handle Track Selection
+    if (customId === 'player_tracks') {
+        if (selectedValue === 'no_tracks') {
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 No tracks in queue! Use `/play` to add songs.')],
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        const trackIndex = parseInt(selectedValue.replace('track_', ''));
+        const selectedTrack = player.queue[trackIndex];
+
+        if (selectedTrack) {
+            await interaction.reply({
+                embeds: [new EmbedBuilder()
+                    .setColor(0x5865F2)
+                    .setTitle(`📀 Track #${trackIndex + 1}`)
+                    .setDescription(`**[${selectedTrack.title}](${selectedTrack.uri})**`)
+                    .addFields(
+                        { name: 'Author', value: selectedTrack.author || 'Unknown', inline: true },
+                        { name: 'Duration', value: formatDuration(selectedTrack.length), inline: true },
+                        { name: 'Requested by', value: selectedTrack.requester?.tag || 'Unknown', inline: true }
+                    )
+                    .setThumbnail(selectedTrack.thumbnail || null)],
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        return;
+    }
+
+    // Handle More Features
+    if (customId === 'player_features') {
+        switch (selectedValue) {
+            case 'feature_seek':
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0x5865F2)
+                        .setTitle('📍 Seek to Position')
+                        .setDescription('Use the `/seek` command to jump to a specific time!\n\n**Examples:**\n• `/seek 1:30` - Jump to 1 minute 30 seconds\n• `/seek 0:45` - Jump to 45 seconds')
+                        .setFooter({ text: 'Note: Seek command needs to be implemented separately' })],
+                    flags: MessageFlags.Ephemeral
+                });
+                break;
+
+            case 'feature_nowplaying':
+                const track = player.queue.current;
+                if (track) {
+                    const position = player.position;
+                    const duration = track.length;
+                    const progressBar = createProgressBar(position, duration, 20);
+
+                    await interaction.reply({
+                        embeds: [new EmbedBuilder()
+                            .setColor(0x5865F2)
+                            .setTitle('🎵 Now Playing - Detailed Info')
+                            .setDescription(`**[${track.title}](${track.uri})**\n\n${progressBar}\n\`${formatDuration(position)}\` / \`${formatDuration(duration)}\``)
+                            .addFields(
+                                { name: '👤 Author', value: track.author || 'Unknown', inline: true },
+                                { name: '👥 Requested by', value: track.requester?.tag || 'Unknown', inline: true },
+                                { name: '🔊 Volume', value: `${player.volume}%`, inline: true },
+                                { name: '🔁 Loop Mode', value: player.loop || 'Off', inline: true },
+                                { name: '📋 Queue Length', value: `${player.queue.length} tracks`, inline: true },
+                                { name: '⏱️ Position', value: `${formatDuration(position)} / ${formatDuration(duration)}`, inline: true }
+                            )
+                            .setThumbnail(track.thumbnail || null)
+                            .setImage(track.thumbnail || null)],
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                break;
+
+            case 'feature_clear':
+                const queueLength = player.queue.length;
+                player.queue.clear();
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0xFF0000)
+                        .setDescription(`🗑️ Cleared **${queueLength}** tracks from the queue!`)],
+                    flags: MessageFlags.Ephemeral
+                });
+                break;
+
+            case 'feature_restart':
+                player.seek(0);
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setDescription('🔄 Restarted the current track!')],
+                    flags: MessageFlags.Ephemeral
+                });
+                break;
+
+            case 'feature_stats':
+                const statsTrack = player.queue.current;
+                const totalQueueDuration = player.queue.reduce((acc, t) => acc + t.length, 0);
+
+                await interaction.reply({
+                    embeds: [new EmbedBuilder()
+                        .setColor(0x5865F2)
+                        .setTitle('📊 Player Statistics')
+                        .setDescription('Current player settings and information')
+                        .addFields(
+                            { name: '🎵 Current Track', value: statsTrack?.title?.substring(0, 50) || 'None', inline: false },
+                            { name: '🔊 Volume', value: `${player.volume}%`, inline: true },
+                            { name: '🔁 Loop Mode', value: player.loop || 'Off', inline: true },
+                            { name: '⏯️ Status', value: player.paused ? 'Paused' : 'Playing', inline: true },
+                            { name: '📋 Queue Size', value: `${player.queue.length} tracks`, inline: true },
+                            { name: '⏱️ Total Queue Duration', value: formatDuration(totalQueueDuration), inline: true },
+                            { name: '🎧 Voice Channel', value: `<#${player.voiceId}>`, inline: true }
+                        )
+                        .setFooter({ text: `Guild ID: ${player.guildId}` })],
+                    flags: MessageFlags.Ephemeral
+                });
+                break;
         }
     }
 });
