@@ -541,10 +541,9 @@ client.on(Events.InteractionCreate, async interaction => {
     const voiceCommands = ['play', 'skip', 'stop', 'pause', 'resume', 'shuffle', 'leave'];
 
     if (voiceCommands.includes(commandName) && !voiceChannel) {
-        return interaction.reply({
-            embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')],
-            flags: MessageFlags.Ephemeral
-        });
+        return sendAutoDeleteReply(interaction,
+            new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')
+        );
     }
 
     let player = kazagumo.players.get(guild.id);
@@ -562,7 +561,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         guildId: guild.id,
                         textId: channel.id,
                         voiceId: voiceChannel.id,
-                        volume: 80,
+                        volume: 30,
                         deaf: true
                     });
                 }
@@ -571,9 +570,14 @@ client.on(Events.InteractionCreate, async interaction => {
                 const result = await kazagumo.search(query, { requester: interaction.user });
 
                 if (!result.tracks.length) {
-                    return interaction.editReply({
+                    await interaction.editReply({
                         embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ No results found!')]
                     });
+                    // Auto-delete after 5 seconds
+                    setTimeout(() => {
+                        interaction.deleteReply().catch(() => { });
+                    }, 5000);
+                    return;
                 }
 
                 if (result.type === 'PLAYLIST') {
@@ -638,6 +642,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.editReply({
                     embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription(`❌ Error: ${error.message}`)]
                 });
+                // Auto-delete after 5 seconds
+                setTimeout(() => {
+                    interaction.deleteReply().catch(() => { });
+                }, 5000);
             }
             break;
         }
@@ -835,7 +843,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         guildId: guild.id,
                         textId: channel.id,
                         voiceId: voiceChannel.id,
-                        volume: 80,
+                        volume: 30,
                         deaf: true
                     });
                 }
