@@ -112,7 +112,35 @@ LAVALINK_SECURE=false
 
 5. Deploy!
 
-### Langkah 3: Setup Discord Bot
+### Langkah 3: Konfigurasi YouTube Plugin (Penting!)
+
+Untuk memperbaiki error "This video requires login" atau "Please sign in", tambahkan environment variables berikut ke service **Lavalink**:
+
+**Wajib untuk YouTube playback:**
+```
+PLUGINS_YOUTUBE_ENABLED=true
+PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
+PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
+PLUGINS_YOUTUBE_CLIENTS_0=WEB
+PLUGINS_YOUTUBE_CLIENTS_1=MWEB
+PLUGINS_YOUTUBE_CLIENTS_2=TVHTML5EMBEDDED
+```
+
+**Opsional tapi direkomendasikan - Setup OAuth:**
+```
+PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+```
+
+Saat pertama kali mengaktifkan OAuth tanpa refresh token:
+1. Cek log Lavalink untuk device code (seperti `XXX-XXX-XXX`)
+2. Buka https://www.google.com/device
+3. Masukkan kode dan login dengan **AKUN GOOGLE BURNER** (jangan akun utama!)
+4. Copy refresh token dari log
+5. Tambahkan ke: `PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...`
+
+> ⚠️ **PERINGATAN:** Jangan pernah gunakan akun Google utama untuk OAuth. Buat akun baru/burner!
+
+### Langkah 4: Setup Discord Bot
 
 1. Buka [Discord Developer Portal](https://discord.com/developers/applications)
 2. Buat aplikasi baru atau gunakan yang sudah ada
@@ -210,8 +238,11 @@ logging:
 - Cek `LAVALINK_HOST` dan `LAVALINK_PASSWORD` sudah benar
 - Di Railway, gunakan **internal URL** bukan public URL
 
-### Lagu tidak bisa diputar
-- YouTube mungkin memblokir. Pastikan Lavalink menggunakan `youtube-plugin` terbaru
+### Lagu tidak bisa diputar / Error "Please sign in"
+- Ini masalah umum karena YouTube memblokir akses otomatis
+- **Solusi 1:** Aktifkan remote cipher: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
+- **Solusi 2:** Setup OAuth dengan akun Google burner (lihat Langkah 3 di atas)
+- **Solusi 3:** Coba client berbeda: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
 - Cek logs Lavalink untuk error detail
 
 ### Commands tidak muncul
@@ -226,6 +257,12 @@ logging:
 - Update berhenti saat musik di-pause
 
 ## 🆕 Yang Baru
+
+### v2.1 - YouTube OAuth & Remote Cipher (Desember 2025)
+- 🔐 Dukungan OAuth untuk autentikasi YouTube (bypass error "Please sign in")
+- 🔧 Integrasi remote cipher server (fix masalah signature extraction)
+- 📝 Dokumentasi diperbarui dengan panduan setup detail
+- 🎵 Playback YouTube lebih reliable
 
 ### v2.0 - Panel Player Interaktif
 - ✨ Panel player interaktif gaya Boogie dengan tombol-tombol

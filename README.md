@@ -112,7 +112,35 @@ LAVALINK_SECURE=false
 
 5. Deploy!
 
-### Step 3: Setup Discord Bot
+### Step 3: Configure YouTube Plugin (Important!)
+
+To fix "This video requires login" or "Please sign in" errors, add these environment variables to your **Lavalink** service:
+
+**Required for YouTube playback:**
+```
+PLUGINS_YOUTUBE_ENABLED=true
+PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
+PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
+PLUGINS_YOUTUBE_CLIENTS_0=WEB
+PLUGINS_YOUTUBE_CLIENTS_1=MWEB
+PLUGINS_YOUTUBE_CLIENTS_2=TVHTML5EMBEDDED
+```
+
+**Optional but recommended - OAuth setup:**
+```
+PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+```
+
+When you first enable OAuth without a refresh token:
+1. Check Lavalink logs for a device code (like `XXX-XXX-XXX`)
+2. Go to https://www.google.com/device
+3. Enter the code and login with a **BURNER Google account** (not your main!)
+4. Copy the refresh token from the logs
+5. Add it to: `PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...`
+
+> ⚠️ **WARNING:** Never use your main Google account for OAuth. Create a new/burner account!
+
+### Step 4: Setup Discord Bot
 
 1. Open [Discord Developer Portal](https://discord.com/developers/applications)
 2. Create a new application or use an existing one
@@ -210,8 +238,11 @@ logging:
 - Check that `LAVALINK_HOST` and `LAVALINK_PASSWORD` are correct
 - On Railway, use the **internal URL**, not the public URL
 
-### Songs won't play
-- YouTube might be blocking requests. Ensure Lavalink is using the latest `youtube-plugin`
+### Songs won't play / "Please sign in" error
+- This is a common issue with YouTube blocking automated access
+- **Solution 1:** Enable remote cipher: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
+- **Solution 2:** Setup OAuth with a burner Google account (see Step 3 above)
+- **Solution 3:** Try different clients: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
 - Check Lavalink logs for detailed errors
 
 ### Commands don't appear
@@ -226,6 +257,12 @@ logging:
 - Updates pause when music is paused
 
 ## 🆕 What's New
+
+### v2.1 - YouTube OAuth & Remote Cipher (December 2025)
+- 🔐 OAuth support for YouTube authentication (bypasses "Please sign in" errors)
+- 🔧 Remote cipher server integration (fixes signature extraction issues)
+- 📝 Updated documentation with detailed setup instructions
+- 🎵 More reliable YouTube playback
 
 ### v2.0 - Interactive Player Panel
 - ✨ Boogie-style interactive player with buttons
