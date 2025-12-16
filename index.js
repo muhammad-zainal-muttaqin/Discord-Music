@@ -198,27 +198,27 @@ function buildPlayerComponents(player) {
                 .setPlaceholder('⚡ More Features...')
                 .addOptions(
                     new StringSelectMenuOptionBuilder()
-                        .setLabel('📍 Seek to position')
+                        .setLabel('Seek to position')
                         .setDescription('Jump to a specific time in the track')
                         .setValue('feature_seek')
                         .setEmoji('📍'),
                     new StringSelectMenuOptionBuilder()
-                        .setLabel('🎵 Now Playing Info')
+                        .setLabel('Now Playing Info')
                         .setDescription('Get detailed track information')
                         .setValue('feature_nowplaying')
                         .setEmoji('🎵'),
                     new StringSelectMenuOptionBuilder()
-                        .setLabel('🗑️ Clear Queue')
+                        .setLabel('Clear Queue')
                         .setDescription('Remove all tracks from the queue')
                         .setValue('feature_clear')
                         .setEmoji('🗑️'),
                     new StringSelectMenuOptionBuilder()
-                        .setLabel('🔄 Restart Track')
+                        .setLabel('Restart Track')
                         .setDescription('Play the current track from the beginning')
                         .setValue('feature_restart')
                         .setEmoji('🔄'),
                     new StringSelectMenuOptionBuilder()
-                        .setLabel('📊 Player Stats')
+                        .setLabel('Player Stats')
                         .setDescription('View player statistics and settings')
                         .setValue('feature_stats')
                         .setEmoji('📊')
