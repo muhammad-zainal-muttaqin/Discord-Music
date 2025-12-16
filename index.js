@@ -644,70 +644,77 @@ client.on(Events.InteractionCreate, async interaction => {
 
         case 'skip': {
             if (!player || !player.playing) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
             }
 
             player.skip();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
+            );
             break;
         }
 
         case 'stop': {
             if (!player) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
+            }
+
+            // Clear interval and player message
+            clearPlayerInterval(guild.id);
+            const playerMsg = playerMessages.get(guild.id);
+            if (playerMsg) {
+                playerMsg.delete().catch(() => { });
+                playerMessages.delete(guild.id);
             }
 
             player.destroy();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏹️ Stopped and cleared the queue!')]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('⏹️ Stopped and cleared the queue!')
+            );
             break;
         }
 
         case 'pause': {
             if (!player || !player.playing) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
             }
 
             player.pause(true);
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')]
-            });
+            clearPlayerInterval(player.guildId);
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')
+            );
+            updatePlayerMessage(player);
             break;
         }
 
         case 'resume': {
             if (!player || !player.paused) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is paused!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is paused!')
+                );
             }
 
             player.pause(false);
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')]
-            });
+            startPlayerInterval(player);
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
+            );
+            updatePlayerMessage(player);
             break;
         }
 
         case 'queue': {
             if (!player || player.queue.length === 0) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 Queue is empty!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFFFF00).setDescription('📭 Queue is empty!')
+                );
             }
 
             const current = player.queue.current;
@@ -726,22 +733,21 @@ client.on(Events.InteractionCreate, async interaction => {
                 description += `\n...and ${player.queue.length - 10} more tracks`;
             }
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder()
                     .setColor(0x00FF00)
                     .setTitle('📋 Queue')
                     .setDescription(description)
-                    .setFooter({ text: `Total: ${player.queue.length + 1} tracks` })]
-            });
+                    .setFooter({ text: `Total: ${player.queue.length + 1} tracks` })
+            );
             break;
         }
 
         case 'nowplaying': {
             if (!player || !player.queue.current) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
             }
 
             const track = player.queue.current;
@@ -750,8 +756,8 @@ client.on(Events.InteractionCreate, async interaction => {
             const progress = Math.floor((position / duration) * 20);
             const progressBar = '▬'.repeat(progress) + '🔘' + '▬'.repeat(20 - progress);
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder()
                     .setColor(0x00FF00)
                     .setTitle('🎵 Now Playing')
                     .setDescription(`**[${track.title}](${track.uri})**\n\n${progressBar}\n${formatDuration(position)} / ${formatDuration(duration)}`)
@@ -760,67 +766,66 @@ client.on(Events.InteractionCreate, async interaction => {
                         { name: 'Author', value: track.author || 'Unknown', inline: true },
                         { name: 'Volume', value: `${player.volume}%`, inline: true },
                         { name: 'Loop', value: player.loop || 'Off', inline: true }
-                    )]
-            });
+                    )
+            );
             break;
         }
 
         case 'volume': {
             if (!player) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
             }
 
             const level = interaction.options.getInteger('level');
             player.setVolume(level);
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume set to **${level}%**`)]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume set to **${level}%**`)
+            );
+            updatePlayerMessage(player);
             break;
         }
 
         case 'shuffle': {
             if (!player || player.queue.length < 2) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Need at least 2 songs in queue to shuffle!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Need at least 2 songs in queue to shuffle!')
+                );
             }
 
             player.queue.shuffle();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')
+            );
+            updatePlayerMessage(player);
             break;
         }
 
         case 'loop': {
             if (!player) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Nothing is playing!')
+                );
             }
 
             const mode = interaction.options.getString('mode');
             player.setLoop(mode);
 
             const modeText = mode === 'none' ? 'Off' : mode === 'track' ? 'Track' : 'Queue';
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔁 Loop mode: **${modeText}**`)]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔁 Loop mode: **${modeText}**`)
+            );
+            updatePlayerMessage(player);
             break;
         }
 
         case 'join': {
             if (!voiceChannel) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ You need to be in a voice channel!')
+                );
             }
 
             try {
@@ -835,33 +840,39 @@ client.on(Events.InteractionCreate, async interaction => {
                     });
                 }
 
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder()
                         .setColor(0x00FF00)
-                        .setDescription(`✅ Joined <#${voiceChannel.id}>! I will stay here until you use \`/leave\`.`)]
-                });
+                        .setDescription(`✅ Joined <#${voiceChannel.id}>! I will stay here until you use \`/leave\`.`)
+                );
             } catch (error) {
                 console.error('Join error:', error);
-                await interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription(`❌ Failed to join: ${error.message}`)],
-                    flags: MessageFlags.Ephemeral
-                });
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription(`❌ Failed to join: ${error.message}`)
+                );
             }
             break;
         }
 
         case 'leave': {
             if (!player) {
-                return interaction.reply({
-                    embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Not in a voice channel!')],
-                    flags: MessageFlags.Ephemeral
-                });
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Not in a voice channel!')
+                );
+            }
+
+            // Clear interval and player message
+            clearPlayerInterval(guild.id);
+            const leavePlayerMsg = playerMessages.get(guild.id);
+            if (leavePlayerMsg) {
+                leavePlayerMsg.delete().catch(() => { });
+                playerMessages.delete(guild.id);
             }
 
             player.destroy();
-            await interaction.reply({
-                embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('👋 Left the voice channel!')]
-            });
+            await sendAutoDeleteReply(interaction,
+                new EmbedBuilder().setColor(0x00FF00).setDescription('👋 Left the voice channel!')
+            );
             break;
         }
     }
