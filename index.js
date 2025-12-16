@@ -85,13 +85,190 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
 
 // Store player messages to update/delete them later
 const playerMessages = new Map();
+// Store update intervals for each guild
+const playerIntervals = new Map();
 
 // Helper function to create progress bar
 function createProgressBar(current, total, length = 12) {
+    if (total === 0) return '🔘' + '▬'.repeat(length - 1);
     const progress = Math.round((current / total) * length);
     const empty = length - progress;
     const progressBar = '▬'.repeat(Math.max(0, progress)) + '🔘' + '▬'.repeat(Math.max(0, empty - 1));
     return progressBar;
+}
+
+// Helper function to build player embed
+function buildPlayerEmbed(player, track) {
+    const position = player.position || 0;
+    const progressBar = createProgressBar(position, track.length);
+
+    return new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setAuthor({ name: '🎧 Music Player', iconURL: track.requester?.displayAvatarURL?.() || null })
+        .setTitle(track.title)
+        .setURL(track.uri)
+        .setDescription(
+            `**Author:** ${track.author || 'Unknown'}\n` +
+            `**Requested by:** ${track.requester?.tag || 'Unknown'}\n\n` +
+            `${progressBar}\n` +
+            `\`${formatDuration(position)}\` / \`${formatDuration(track.length)}\``
+        )
+        .setThumbnail(track.thumbnail || null)
+        .setFooter({ text: `🎶 Queue: ${player.queue.length} tracks remaining • Volume: ${player.volume}% • ${player.paused ? '⏸️ Paused' : '▶️ Playing'}` });
+}
+
+// Helper function to build player components
+function buildPlayerComponents(player) {
+    // Row 1: Main playback controls
+    const controlButtons = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('player_previous')
+                .setEmoji('⏮️')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_pause')
+                .setEmoji(player.paused ? '▶️' : '⏸️')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('player_skip')
+                .setEmoji('⏭️')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_stop')
+                .setEmoji('⏹️')
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId('player_shuffle')
+                .setEmoji('🔀')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+    // Row 2: Volume and loop controls
+    const volumeButtons = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('player_voldown')
+                .setEmoji('🔉')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_volup')
+                .setEmoji('🔊')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_loop')
+                .setEmoji('🔁')
+                .setStyle(player.loop && player.loop !== 'none' ? ButtonStyle.Success : ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_favorite')
+                .setEmoji('❤️')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('player_queue')
+                .setEmoji('📋')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+    // Row 3: Track selection dropdown (shows queue)
+    const trackDropdown = new ActionRowBuilder()
+        .addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('player_tracks')
+                .setPlaceholder(`📀 View Queue Tracks (${player.queue.length})`)
+                .addOptions(
+                    player.queue.length > 0
+                        ? player.queue.slice(0, 25).map((t, i) =>
+                            new StringSelectMenuOptionBuilder()
+                                .setLabel(`${i + 1}. ${t.title.substring(0, 90)}`)
+                                .setDescription(`${t.author || 'Unknown'} • ${formatDuration(t.length)}`)
+                                .setValue(`track_${i}`)
+                        )
+                        : [new StringSelectMenuOptionBuilder()
+                            .setLabel('No tracks in queue')
+                            .setDescription('Use /play to add more songs!')
+                            .setValue('no_tracks')]
+                )
+        );
+
+    // Row 4: More Features dropdown
+    const featuresDropdown = new ActionRowBuilder()
+        .addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('player_features')
+                .setPlaceholder('⚡ More Features...')
+                .addOptions(
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('📍 Seek to position')
+                        .setDescription('Jump to a specific time in the track')
+                        .setValue('feature_seek')
+                        .setEmoji('📍'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('🎵 Now Playing Info')
+                        .setDescription('Get detailed track information')
+                        .setValue('feature_nowplaying')
+                        .setEmoji('🎵'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('🗑️ Clear Queue')
+                        .setDescription('Remove all tracks from the queue')
+                        .setValue('feature_clear')
+                        .setEmoji('🗑️'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('🔄 Restart Track')
+                        .setDescription('Play the current track from the beginning')
+                        .setValue('feature_restart')
+                        .setEmoji('🔄'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('📊 Player Stats')
+                        .setDescription('View player statistics and settings')
+                        .setValue('feature_stats')
+                        .setEmoji('📊')
+                )
+        );
+
+    return [controlButtons, volumeButtons, trackDropdown, featuresDropdown];
+}
+
+// Function to update the player message
+async function updatePlayerMessage(player) {
+    const playerMsg = playerMessages.get(player.guildId);
+    const track = player.queue.current;
+
+    if (!playerMsg || !track) return;
+
+    try {
+        const embed = buildPlayerEmbed(player, track);
+        const components = buildPlayerComponents(player);
+
+        await playerMsg.edit({ embeds: [embed], components });
+    } catch (error) {
+        // Message might have been deleted, clear the interval
+        console.error('Failed to update player message:', error.message);
+        clearPlayerInterval(player.guildId);
+    }
+}
+
+// Function to start the update interval
+function startPlayerInterval(player) {
+    // Clear any existing interval
+    clearPlayerInterval(player.guildId);
+
+    // Update every 5 seconds
+    const interval = setInterval(() => {
+        if (player && player.queue.current && !player.paused) {
+            updatePlayerMessage(player);
+        }
+    }, 5000);
+
+    playerIntervals.set(player.guildId, interval);
+}
+
+// Function to clear the update interval
+function clearPlayerInterval(guildId) {
+    const interval = playerIntervals.get(guildId);
+    if (interval) {
+        clearInterval(interval);
+        playerIntervals.delete(guildId);
+    }
 }
 
 // Player Events
@@ -119,136 +296,19 @@ kazagumo.on('playerStart', async (player, track) => {
             oldPlayerMsg.delete().catch(() => { });
         }
 
-        // 3. Create progress bar (starts at 0:00)
-        const progressBar = createProgressBar(0, track.length);
-
-        // 4. Send persistent player panel with control buttons
-        const playerEmbed = new EmbedBuilder()
-            .setColor(0x5865F2)
-            .setAuthor({ name: '🎧 Music Player', iconURL: track.requester?.displayAvatarURL?.() || null })
-            .setTitle(track.title)
-            .setURL(track.uri)
-            .setDescription(
-                `**Author:** ${track.author || 'Unknown'}\n` +
-                `**Requested by:** ${track.requester?.tag || 'Unknown'}\n\n` +
-                `${progressBar}\n` +
-                `\`0:00\` / \`${formatDuration(track.length)}\``
-            )
-            .setThumbnail(track.thumbnail || null)
-            .setFooter({ text: `🎶 Queue: ${player.queue.length} tracks remaining • Volume: ${player.volume}%` });
-
-        // Row 1: Main playback controls
-        const controlButtons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('player_previous')
-                    .setEmoji('⏮️')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_pause')
-                    .setEmoji('⏸️')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId('player_skip')
-                    .setEmoji('⏭️')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_stop')
-                    .setEmoji('⏹️')
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId('player_shuffle')
-                    .setEmoji('🔀')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        // Row 2: Volume and loop controls
-        const volumeButtons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('player_voldown')
-                    .setEmoji('🔉')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_volup')
-                    .setEmoji('🔊')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_loop')
-                    .setEmoji('🔁')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_favorite')
-                    .setEmoji('❤️')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('player_queue')
-                    .setEmoji('📋')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        // Row 3: Track selection dropdown (shows queue)
-        const trackDropdown = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('player_tracks')
-                    .setPlaceholder('📀 View Queue Tracks')
-                    .addOptions(
-                        player.queue.length > 0
-                            ? player.queue.slice(0, 25).map((t, i) =>
-                                new StringSelectMenuOptionBuilder()
-                                    .setLabel(`${i + 1}. ${t.title.substring(0, 90)}`)
-                                    .setDescription(`${t.author || 'Unknown'} • ${formatDuration(t.length)}`)
-                                    .setValue(`track_${i}`)
-                            )
-                            : [new StringSelectMenuOptionBuilder()
-                                .setLabel('No tracks in queue')
-                                .setDescription('Use /play to add more songs!')
-                                .setValue('no_tracks')]
-                    )
-            );
-
-        // Row 4: More Features dropdown
-        const featuresDropdown = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('player_features')
-                    .setPlaceholder('⚡ More Features...')
-                    .addOptions(
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('📍 Seek to position')
-                            .setDescription('Jump to a specific time in the track')
-                            .setValue('feature_seek')
-                            .setEmoji('📍'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('🎵 Now Playing Info')
-                            .setDescription('Get detailed track information')
-                            .setValue('feature_nowplaying')
-                            .setEmoji('🎵'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('🗑️ Clear Queue')
-                            .setDescription('Remove all tracks from the queue')
-                            .setValue('feature_clear')
-                            .setEmoji('🗑️'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('🔄 Restart Track')
-                            .setDescription('Play the current track from the beginning')
-                            .setValue('feature_restart')
-                            .setEmoji('🔄'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('📊 Player Stats')
-                            .setDescription('View player statistics and settings')
-                            .setValue('feature_stats')
-                            .setEmoji('📊')
-                    )
-            );
+        // 3. Build and send the player panel
+        const playerEmbed = buildPlayerEmbed(player, track);
+        const components = buildPlayerComponents(player);
 
         try {
             const playerMsg = await channel.send({
                 embeds: [playerEmbed],
-                components: [controlButtons, volumeButtons, trackDropdown, featuresDropdown]
+                components
             });
             playerMessages.set(player.guildId, playerMsg);
+
+            // 4. Start the real-time update interval (every 5 seconds)
+            startPlayerInterval(player);
         } catch (error) {
             console.error('Failed to send player message:', error);
         }
@@ -256,10 +316,21 @@ kazagumo.on('playerStart', async (player, track) => {
 });
 
 kazagumo.on('playerEnd', (player) => {
-    // Queue is empty, will auto-handle
+    // Clear the update interval when track ends
+    clearPlayerInterval(player.guildId);
 });
 
 kazagumo.on('playerEmpty', (player) => {
+    // Clear the update interval
+    clearPlayerInterval(player.guildId);
+
+    // Delete the player message
+    const playerMsg = playerMessages.get(player.guildId);
+    if (playerMsg) {
+        playerMsg.delete().catch(() => { });
+        playerMessages.delete(player.guildId);
+    }
+
     const channel = client.channels.cache.get(player.textId);
     if (channel) {
         const embed = new EmbedBuilder()
@@ -276,6 +347,7 @@ kazagumo.on('playerEmpty', (player) => {
             })
             .catch(console.error);
     }
+
 
     // Bot will stay in voice channel - no auto-leave
     // If you want auto-leave, uncomment the code below and set your desired timeout
@@ -479,6 +551,11 @@ client.on(Events.InteractionCreate, async interaction => {
                             .setColor(0x00FF00)
                             .setDescription(`📋 Added **${result.tracks.length}** tracks from playlist: **${result.playlistName}**`)]
                     });
+
+                    // Update the player message with new queue count
+                    if (player.playing) {
+                        updatePlayerMessage(player);
+                    }
                 } else {
                     // Add single track
                     player.queue.add(result.tracks[0]);
@@ -489,6 +566,9 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .setColor(0x00FF00)
                                 .setDescription(`✅ Added to queue: **[${result.tracks[0].title}](${result.tracks[0].uri})**`)]
                         });
+
+                        // Update the player message with new queue count
+                        updatePlayerMessage(player);
                     } else {
                         await interaction.editReply({
                             embeds: [new EmbedBuilder()
@@ -772,23 +852,31 @@ client.on(Events.InteractionCreate, async interaction => {
                     embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')],
                     flags: MessageFlags.Ephemeral
                 });
+                // Update player to show 0:00 position
+                updatePlayerMessage(player);
             }
             break;
 
         case 'player_pause':
             if (player.paused) {
                 player.pause(false);
+                // Restart the update interval when resuming
+                startPlayerInterval(player);
                 await interaction.reply({
                     embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')],
                     flags: MessageFlags.Ephemeral
                 });
             } else {
                 player.pause(true);
+                // Stop updates while paused (saves resources)
+                clearPlayerInterval(player.guildId);
                 await interaction.reply({
                     embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')],
                     flags: MessageFlags.Ephemeral
                 });
             }
+            // Update player to show paused/playing state and button icon
+            updatePlayerMessage(player);
             break;
 
         case 'player_skip':
@@ -800,6 +888,8 @@ client.on(Events.InteractionCreate, async interaction => {
             break;
 
         case 'player_stop':
+            // Clear the update interval
+            clearPlayerInterval(guild.id);
             // Delete player message
             const playerMsg = playerMessages.get(guild.id);
             if (playerMsg) {
@@ -825,6 +915,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription('🔀 Queue shuffled!')],
                 flags: MessageFlags.Ephemeral
             });
+            // Update player to show shuffled queue
+            updatePlayerMessage(player);
             break;
 
         case 'player_voldown':
@@ -834,6 +926,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)],
                 flags: MessageFlags.Ephemeral
             });
+            // Update player to show new volume
+            updatePlayerMessage(player);
             break;
 
         case 'player_volup':
@@ -843,6 +937,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)],
                 flags: MessageFlags.Ephemeral
             });
+            // Update player to show new volume
+            updatePlayerMessage(player);
             break;
 
         case 'player_loop':
@@ -855,6 +951,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 embeds: [new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)],
                 flags: MessageFlags.Ephemeral
             });
+            // Update player to show loop button color change
+            updatePlayerMessage(player);
             break;
 
         case 'player_queue':
