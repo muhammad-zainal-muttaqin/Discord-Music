@@ -1,6 +1,6 @@
 # 🎵 Discord Music Bot
 
-**🌐 Bahasa: [English](README.md) | [Indonesia](README_ID.md)**
+**🌐 Bahasa: [English](README.md) | [Indonesia](README_ID.md) | [日本語](README_jp.md)**
 
 ---
 
