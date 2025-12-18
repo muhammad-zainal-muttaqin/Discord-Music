@@ -177,6 +177,12 @@ async function rejoinVoiceChannels() {
 async function attemptReconnect() {
     if (isReconnecting) return;
 
+    // Safety check: Don't reconnect if Discord client is not ready (missing userId)
+    if (!client.user?.id) {
+        // console.log('⏳ [Reconnect] Skipping attempt: Discord client not ready yet...');
+        return;
+    }
+
     // Check node states: 0=DISCONNECTED, 1=CONNECTING, 2=CONNECTED, 3=DISCONNECTING
     let hasWorkingNode = false;
     kazagumo.shoukaku.nodes.forEach(node => {
