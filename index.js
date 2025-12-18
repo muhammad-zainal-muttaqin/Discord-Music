@@ -88,9 +88,16 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_LOG = 10; // Only log first 10 attempts to avoid log spam
 
 function attemptReconnect() {
-    const connectedNodes = kazagumo.shoukaku.nodes.filter(node => node.state === 2); // 2 = CONNECTED
+    // nodes is a Map, not an Array - check if any node is connected
+    let hasConnectedNode = false;
 
-    if (connectedNodes.size === 0) {
+    kazagumo.shoukaku.nodes.forEach(node => {
+        if (node.state === 2) { // 2 = CONNECTED
+            hasConnectedNode = true;
+        }
+    });
+
+    if (!hasConnectedNode) {
         reconnectAttempts++;
         if (reconnectAttempts <= MAX_RECONNECT_LOG) {
             console.log(`🔄 [Backup Reconnect] Attempt ${reconnectAttempts} - No connected nodes, Shoukaku should be reconnecting...`);
