@@ -112,10 +112,16 @@ function saveVoiceStates() {
 }
 
 // Rejoin voice channels and RESUME music
-async function rejoinVoiceChannels() {
-    if (savedVoiceStates.size === 0) return;
+let resumeRetryCount = 0;
+const MAX_RESUME_RETRIES = 3;
 
-    console.log(`🔄 [Resume] Starting resumption for ${savedVoiceStates.size} channel(s)...`);
+async function rejoinVoiceChannels() {
+    if (savedVoiceStates.size === 0) {
+        resumeRetryCount = 0;
+        return;
+    }
+
+    console.log(`🔄 [Resume] Attempt ${resumeRetryCount + 1}/${MAX_RESUME_RETRIES} for ${savedVoiceStates.size} channel(s)...`);
 
     for (const [guildId, state] of savedVoiceStates) {
         try {
@@ -125,13 +131,10 @@ async function rejoinVoiceChannels() {
             const voiceChannel = guild.channels.cache.get(state.voiceId);
             if (!voiceChannel) { savedVoiceStates.delete(guildId); continue; }
 
-            // Cleanup existing stale player if any
-            const existingPlayer = kazagumo.players.get(guildId);
-            if (existingPlayer) {
-                try { existingPlayer.destroy(); } catch (e) { }
-            }
+            // Just remove from local cache, don't call Lavalink API (it will error)
+            kazagumo.players.delete(guildId);
 
-            // Create player (Kazagumo will automatically pick the ready node)
+            // Create fresh player
             const player = await kazagumo.createPlayer({
                 guildId: guildId,
                 textId: state.textId,
@@ -140,7 +143,7 @@ async function rejoinVoiceChannels() {
                 deaf: true
             });
 
-            // Restore Position & Queue
+            // Restore Queue
             if (state.current) {
                 player.queue.add(state.current);
                 if (state.queue && state.queue.length > 0) {
@@ -157,7 +160,7 @@ async function rejoinVoiceChannels() {
                 }
             }
 
-            console.log(`✅ [Resume] Successfully resumed: ${guild.name}`);
+            console.log(`✅ [Resume] Success: ${guild.name}`);
 
             const textChannel = client.channels.cache.get(state.textId);
             if (textChannel) {
@@ -167,16 +170,23 @@ async function rejoinVoiceChannels() {
                     .setTimestamp();
                 textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
             }
+
             savedVoiceStates.delete(guildId);
+            resumeRetryCount = 0;
 
         } catch (error) {
-            console.error(`❌ [Resume] Failed for ${guildId}:`, error.message);
-            // If it's a session error, we retry once more after 5s
-            if (error.message.includes('Session')) {
+            console.error(`❌ [Resume] Failed:`, error.message);
+
+            resumeRetryCount++;
+            if (resumeRetryCount < MAX_RESUME_RETRIES) {
+                console.log(`🔄 [Resume] Retrying in 5s... (${resumeRetryCount}/${MAX_RESUME_RETRIES})`);
                 setTimeout(rejoinVoiceChannels, 5000);
                 return;
+            } else {
+                console.log(`❌ [Resume] Giving up after ${MAX_RESUME_RETRIES} attempts.`);
+                savedVoiceStates.clear();
+                resumeRetryCount = 0;
             }
-            savedVoiceStates.delete(guildId);
         }
     }
 }
