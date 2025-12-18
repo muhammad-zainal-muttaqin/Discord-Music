@@ -83,6 +83,7 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
 // ACTIVE reconnection mechanism - actually reconnects when Lavalink is down
 let reconnectAttempts = 0;
 let isReconnecting = false;
+let intentionalClose = false; // Flag to prevent loop when we intentionally remove node
 
 // Store voice channel states for rejoin after reconnect
 const savedVoiceStates = new Map(); // guildId -> { voiceId, textId }
@@ -174,32 +175,50 @@ async function attemptReconnect() {
         }
     });
 
-    if (!hasConnectedNode && !isReconnecting) {
-        reconnectAttempts++;
-        isReconnecting = true;
-
-        // Save voice states on first disconnect detection
-        if (reconnectAttempts === 1) {
-            saveVoiceStates();
+    // If connected, reset counter and rejoin if needed
+    if (hasConnectedNode) {
+        if (reconnectAttempts > 0) {
+            console.log(`✅ [Reconnect] Lavalink connected! Resetting after ${reconnectAttempts} attempts.`);
+            reconnectAttempts = 0;
+            // Rejoin voice channels after successful reconnect
+            setTimeout(rejoinVoiceChannels, 3000);
         }
+        return; // Already connected, nothing to do
+    }
 
-        console.log(`🔄 [Reconnect] Attempt ${reconnectAttempts} - No connected nodes, forcing reconnection...`);
+    // Not connected, attempt reconnection
+    reconnectAttempts++;
+    isReconnecting = true;
 
-        try {
-            // Remove all existing nodes first
-            kazagumo.shoukaku.nodes.forEach((node, name) => {
+    // Save voice states on first disconnect detection
+    if (reconnectAttempts === 1) {
+        saveVoiceStates();
+    }
+
+    console.log(`🔄 [Reconnect] Attempt ${reconnectAttempts} - No connected nodes, adding new node...`);
+
+    try {
+        // Only add a new node, don't remove the old ones (they're already disconnected)
+        // This prevents the infinite loop caused by removeNode triggering close event
+
+        // Check if node with this name already exists
+        const existingNode = kazagumo.shoukaku.nodes.get('Lavalink');
+        if (!existingNode || existingNode.state !== 2) {
+            // Remove existing node first if it exists but is disconnected
+            if (existingNode) {
+                intentionalClose = true;
                 try {
-                    kazagumo.shoukaku.removeNode(name);
-                    console.log(`🗑️ Removed disconnected node: ${name}`);
+                    kazagumo.shoukaku.removeNode('Lavalink');
+                    console.log(`🗑️ Removed disconnected node: Lavalink`);
                 } catch (e) {
-                    // Ignore removal errors
+                    // Ignore
                 }
-            });
+                // Wait a bit after removal
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                intentionalClose = false;
+            }
 
-            // Wait a moment before re-adding
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Re-add the node
+            // Add the node
             kazagumo.shoukaku.addNode({
                 name: 'Lavalink',
                 url: process.env.LAVALINK_HOST || 'localhost:2333',
@@ -207,33 +226,32 @@ async function attemptReconnect() {
                 secure: process.env.LAVALINK_SECURE === 'true' || false
             });
 
-            console.log(`➕ Re-added Lavalink node, waiting for connection...`);
-
-        } catch (error) {
-            console.error(`❌ Reconnection failed:`, error.message);
+            console.log(`➕ Added Lavalink node, waiting for connection...`);
         }
 
-        isReconnecting = false;
-    } else if (hasConnectedNode && reconnectAttempts > 0) {
-        console.log(`✅ [Reconnect] Lavalink reconnected after ${reconnectAttempts} attempts!`);
-        reconnectAttempts = 0;
-
-        // Rejoin voice channels after successful reconnect
-        setTimeout(rejoinVoiceChannels, 3000);
+    } catch (error) {
+        console.error(`❌ Reconnection failed:`, error.message);
     }
+
+    isReconnecting = false;
 }
 
 // Check connection every 30 seconds and actively reconnect if needed
 setInterval(attemptReconnect, 30000);
 
-// Also attempt reconnect immediately when we detect a close
+// Handle close event - only trigger reconnect for unexpected closes
 kazagumo.shoukaku.on('close', (name, code, reason) => {
     console.warn(`⚠️ Lavalink Node "${name}" closed: ${code} - ${reason}`);
 
-    // Save voice states immediately on close
+    // Don't trigger reconnect if we intentionally closed it, or if code is 1000 (normal close)
+    if (intentionalClose || code === 1000) {
+        return;
+    }
+
+    // Save voice states immediately on unexpected close
     saveVoiceStates();
 
-    // Trigger reconnect after a short delay
+    // Trigger reconnect after a delay
     setTimeout(attemptReconnect, 5000);
 });
 
