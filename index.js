@@ -71,10 +71,7 @@ kazagumo.shoukaku.on('error', (name, error) => {
     console.error(`❌ Lavalink Node "${name}" error:`, error);
 });
 
-kazagumo.shoukaku.on('close', (name, code, reason) => {
-    console.warn(`⚠️ Lavalink Node "${name}" closed: ${code} - ${reason}`);
-});
-
+// Close event is handled below with reconnect logic
 kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
     if (moved) {
         console.log(`🔄 Lavalink Node "${name}" players moved to another node`);
@@ -83,49 +80,72 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
     }
 });
 
-// Backup reconnection mechanism - if Shoukaku's built-in reconnect fails
+// ACTIVE reconnection mechanism - actually reconnects when Lavalink is down
 let reconnectAttempts = 0;
-const MAX_RECONNECT_LOG = 10; // Only log first 10 attempts to avoid log spam
+let isReconnecting = false;
 
-function attemptReconnect() {
-    // nodes is a Map, not an Array - check if any node is connected
+async function attemptReconnect() {
+    // Skip if already trying to reconnect
+    if (isReconnecting) return;
+
+    // Check if any node is connected
     let hasConnectedNode = false;
-
     kazagumo.shoukaku.nodes.forEach(node => {
         if (node.state === 2) { // 2 = CONNECTED
             hasConnectedNode = true;
         }
     });
 
-    if (!hasConnectedNode) {
+    if (!hasConnectedNode && !isReconnecting) {
         reconnectAttempts++;
-        if (reconnectAttempts <= MAX_RECONNECT_LOG) {
-            console.log(`🔄 [Backup Reconnect] Attempt ${reconnectAttempts} - No connected nodes, Shoukaku should be reconnecting...`);
-        }
+        isReconnecting = true;
 
-        // If Shoukaku has given up (after ~2.5 hours with 999 tries), force reconnect
-        if (reconnectAttempts > 900) {
-            console.log('🔄 [Backup Reconnect] Forcing node reconnect...');
-            kazagumo.shoukaku.nodes.forEach(node => {
-                if (node.state !== 2) { // Not connected
-                    try {
-                        node.connect();
-                    } catch (e) {
-                        console.error('Failed to force reconnect:', e.message);
-                    }
+        console.log(`🔄 [Reconnect] Attempt ${reconnectAttempts} - No connected nodes, forcing reconnection...`);
+
+        try {
+            // Remove all existing nodes first
+            kazagumo.shoukaku.nodes.forEach((node, name) => {
+                try {
+                    kazagumo.shoukaku.removeNode(name);
+                    console.log(`�️ Removed disconnected node: ${name}`);
+                } catch (e) {
+                    // Ignore removal errors
                 }
             });
+
+            // Wait a moment before re-adding
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Re-add the node
+            kazagumo.shoukaku.addNode({
+                name: 'Lavalink',
+                url: process.env.LAVALINK_HOST || 'localhost:2333',
+                auth: process.env.LAVALINK_PASSWORD || 'youshallnotpass',
+                secure: process.env.LAVALINK_SECURE === 'true' || false
+            });
+
+            console.log(`➕ Re-added Lavalink node, waiting for connection...`);
+
+        } catch (error) {
+            console.error(`❌ Reconnection failed:`, error.message);
         }
-    } else {
-        if (reconnectAttempts > 0) {
-            console.log(`✅ [Backup Reconnect] Lavalink reconnected after ${reconnectAttempts} checks!`);
-            reconnectAttempts = 0;
-        }
+
+        isReconnecting = false;
+    } else if (hasConnectedNode && reconnectAttempts > 0) {
+        console.log(`✅ [Reconnect] Lavalink reconnected after ${reconnectAttempts} attempts!`);
+        reconnectAttempts = 0;
     }
 }
 
-// Check connection every 30 seconds
+// Check connection every 30 seconds and actively reconnect if needed
 setInterval(attemptReconnect, 30000);
+
+// Also attempt reconnect immediately when we detect a close
+kazagumo.shoukaku.on('close', (name, code, reason) => {
+    console.warn(`⚠️ Lavalink Node "${name}" closed: ${code} - ${reason}`);
+    // Trigger reconnect after a short delay
+    setTimeout(attemptReconnect, 5000);
+});
 
 // Store player messages to update/delete them later
 const playerMessages = new Map();
