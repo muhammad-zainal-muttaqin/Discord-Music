@@ -113,63 +113,92 @@ function saveVoiceStates() {
 // Rejoin voice channels and RESUME music
 async function rejoinVoiceChannels() {
     if (savedVoiceStates.size === 0) return;
+
+    // Check if node is truly ready
+    const node = kazagumo.shoukaku.nodes.get('Lavalink');
+    if (!node || node.state !== 2) {
+        console.log('⏳ Node not ready yet, delaying resume...');
+        setTimeout(rejoinVoiceChannels, 5000);
+        return;
+    }
+
     console.log(`🔄 Attempting to resume playback in ${savedVoiceStates.size} channel(s)...`);
 
     for (const [guildId, state] of savedVoiceStates) {
-        try {
-            const guild = client.guilds.cache.get(guildId);
-            if (!guild) { savedVoiceStates.delete(guildId); continue; }
+        let attempts = 0;
+        const maxAttempts = 2;
 
-            const voiceChannel = guild.channels.cache.get(state.voiceId);
-            if (!voiceChannel) { savedVoiceStates.delete(guildId); continue; }
+        const attemptResuming = async () => {
+            try {
+                const guild = client.guilds.cache.get(guildId);
+                if (!guild) { savedVoiceStates.delete(guildId); return; }
 
-            // Create player
-            const player = await kazagumo.createPlayer({
-                guildId: guildId,
-                textId: state.textId,
-                voiceId: state.voiceId,
-                volume: state.volume || 30,
-                deaf: true
-            });
+                const voiceChannel = guild.channels.cache.get(state.voiceId);
+                if (!voiceChannel) { savedVoiceStates.delete(guildId); return; }
 
-            // Set settings
-            if (state.loop) player.setLoop(state.loop);
+                // Cleanup existing stale player if any
+                const existingPlayer = kazagumo.players.get(guildId);
+                if (existingPlayer) {
+                    try { existingPlayer.destroy(); } catch (e) { }
+                    await new Promise(r => setTimeout(r, 1000));
+                }
 
-            // Restore Queue
-            if (state.current) {
-                // Add current track first
-                player.queue.add(state.current);
+                // Create player
+                const player = await kazagumo.createPlayer({
+                    guildId: guildId,
+                    textId: state.textId,
+                    voiceId: state.voiceId,
+                    volume: state.volume || 30,
+                    deaf: true
+                });
 
-                // Add rest of the queue
-                if (state.queue && state.queue.length > 0) {
-                    for (const track of state.queue) {
-                        player.queue.add(track);
+                // Set settings
+                if (state.loop) player.setLoop(state.loop);
+
+                // Restore Queue
+                if (state.current) {
+                    player.queue.add(state.current);
+                    if (state.queue && state.queue.length > 0) {
+                        for (const track of state.queue) {
+                            player.queue.add(track);
+                        }
+                    }
+
+                    // Play and seek
+                    await player.play();
+                    if (state.position > 5000) {
+                        setTimeout(() => {
+                            try { player.seek(state.position); } catch (e) { }
+                        }, 2000);
                     }
                 }
 
-                // Play and seek to previous position
-                await player.play();
-                if (state.position > 5000) { // Only seek if it was more than 5s in
-                    setTimeout(() => {
-                        try { player.seek(state.position); } catch (e) { }
-                    }, 2000);
+                console.log(`✅ Resumed playback in guild: ${guild.name}`);
+
+                const textChannel = client.channels.cache.get(state.textId);
+                if (textChannel) {
+                    const embed = new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setDescription(`🔄 **Reconnected!** Resuming playback with **${player.queue.length + (player.queue.current ? 1 : 0)}** tracks.`)
+                        .setTimestamp();
+                    textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
+                }
+                savedVoiceStates.delete(guildId);
+
+            } catch (error) {
+                attempts++;
+                console.error(`❌ Resume attempt ${attempts} failed for ${guildId}:`, error.message);
+
+                if (attempts < maxAttempts) {
+                    console.log(`🔄 Retrying resume for ${guildId} in 5s...`);
+                    setTimeout(attemptResuming, 5000);
+                } else {
+                    savedVoiceStates.delete(guildId); // Give up
                 }
             }
+        };
 
-            console.log(`✅ Resumed playback in guild: ${guild.name}`);
-
-            const textChannel = client.channels.cache.get(state.textId);
-            if (textChannel) {
-                const embed = new EmbedBuilder()
-                    .setColor(0x00FF00)
-                    .setDescription(`🔄 **Reconnected!** Resuming playback with **${player.queue.length + (player.queue.current ? 1 : 0)}** tracks.`)
-                    .setTimestamp();
-                textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
-            }
-            savedVoiceStates.delete(guildId);
-        } catch (error) {
-            console.error(`❌ Failed to resume guild ${guildId}:`, error.message);
-        }
+        await attemptResuming();
     }
 }
 
