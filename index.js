@@ -85,25 +85,35 @@ let reconnectAttempts = 0;
 let isReconnecting = false;
 let intentionalClose = false;
 
-// Store voice channel states for rejoin after reconnect
-const savedVoiceStates = new Map();
+// Store voice channel states and QUEUE for rejoin after reconnect
+const savedVoiceStates = new Map(); // guildId -> { voiceId, textId, current, queue, position }
 
+// Save current voice states AND queue before disconnect
 function saveVoiceStates() {
     kazagumo.players.forEach((player, guildId) => {
         if (player.voiceId) {
+            // Only save if there's actually music in queue or playing
+            const current = player.queue.current;
+            const queue = [...player.queue]; // Extract all tracks from queue
+
             savedVoiceStates.set(guildId, {
                 voiceId: player.voiceId,
-                textId: player.textId
+                textId: player.textId,
+                current: current,
+                queue: queue,
+                position: player.position,
+                volume: player.volume,
+                loop: player.loop
             });
-            console.log(`💾 Saved voice state for guild ${guildId}: voice=${player.voiceId}`);
+            console.log(`💾 Saved state & queue for guild ${guildId}: ${queue.length + (current ? 1 : 0)} tracks`);
         }
     });
 }
 
-// Rejoin voice channels
+// Rejoin voice channels and RESUME music
 async function rejoinVoiceChannels() {
     if (savedVoiceStates.size === 0) return;
-    console.log(`🔄 Attempting to rejoin ${savedVoiceStates.size} voice channel(s)...`);
+    console.log(`🔄 Attempting to resume playback in ${savedVoiceStates.size} channel(s)...`);
 
     for (const [guildId, state] of savedVoiceStates) {
         try {
@@ -113,26 +123,52 @@ async function rejoinVoiceChannels() {
             const voiceChannel = guild.channels.cache.get(state.voiceId);
             if (!voiceChannel) { savedVoiceStates.delete(guildId); continue; }
 
-            await kazagumo.createPlayer({
+            // Create player
+            const player = await kazagumo.createPlayer({
                 guildId: guildId,
                 textId: state.textId,
                 voiceId: state.voiceId,
-                volume: 30,
+                volume: state.volume || 30,
                 deaf: true
             });
-            console.log(`✅ Rejoined voice channel in guild: ${guild.name}`);
+
+            // Set settings
+            if (state.loop) player.setLoop(state.loop);
+
+            // Restore Queue
+            if (state.current) {
+                // Add current track first
+                player.queue.add(state.current);
+
+                // Add rest of the queue
+                if (state.queue && state.queue.length > 0) {
+                    for (const track of state.queue) {
+                        player.queue.add(track);
+                    }
+                }
+
+                // Play and seek to previous position
+                await player.play();
+                if (state.position > 5000) { // Only seek if it was more than 5s in
+                    setTimeout(() => {
+                        try { player.seek(state.position); } catch (e) { }
+                    }, 2000);
+                }
+            }
+
+            console.log(`✅ Resumed playback in guild: ${guild.name}`);
 
             const textChannel = client.channels.cache.get(state.textId);
             if (textChannel) {
                 const embed = new EmbedBuilder()
                     .setColor(0x00FF00)
-                    .setDescription('🔄 Reconnected to Lavalink! Bot is back online.')
+                    .setDescription(`🔄 **Reconnected!** Resuming playback with **${player.queue.length + (player.queue.current ? 1 : 0)}** tracks.`)
                     .setTimestamp();
                 textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
             }
             savedVoiceStates.delete(guildId);
         } catch (error) {
-            console.error(`❌ Failed to rejoin guild ${guildId}:`, error.message);
+            console.error(`❌ Failed to resume guild ${guildId}:`, error.message);
         }
     }
 }
