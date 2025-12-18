@@ -115,91 +115,69 @@ function saveVoiceStates() {
 async function rejoinVoiceChannels() {
     if (savedVoiceStates.size === 0) return;
 
-    // Check if node is truly ready
-    const node = kazagumo.shoukaku.nodes.get('Lavalink');
-    if (!node || node.state !== 2) {
-        console.log('⏳ Node not ready yet, delaying resume...');
-        setTimeout(rejoinVoiceChannels, 5000);
-        return;
-    }
-
-    console.log(`🔄 Attempting to resume playback in ${savedVoiceStates.size} channel(s)...`);
+    console.log(`🔄 [Resume] Starting resumption for ${savedVoiceStates.size} channel(s)...`);
 
     for (const [guildId, state] of savedVoiceStates) {
-        let attempts = 0;
-        const maxAttempts = 2;
+        try {
+            const guild = client.guilds.cache.get(guildId);
+            if (!guild) { savedVoiceStates.delete(guildId); continue; }
 
-        const attemptResuming = async () => {
-            try {
-                const guild = client.guilds.cache.get(guildId);
-                if (!guild) { savedVoiceStates.delete(guildId); return; }
+            const voiceChannel = guild.channels.cache.get(state.voiceId);
+            if (!voiceChannel) { savedVoiceStates.delete(guildId); continue; }
 
-                const voiceChannel = guild.channels.cache.get(state.voiceId);
-                if (!voiceChannel) { savedVoiceStates.delete(guildId); return; }
+            // Cleanup existing stale player if any
+            const existingPlayer = kazagumo.players.get(guildId);
+            if (existingPlayer) {
+                try { existingPlayer.destroy(); } catch (e) { }
+            }
 
-                // Cleanup existing stale player if any
-                const existingPlayer = kazagumo.players.get(guildId);
-                if (existingPlayer) {
-                    try { existingPlayer.destroy(); } catch (e) { }
-                    await new Promise(r => setTimeout(r, 1000));
-                }
+            // Create player (Kazagumo will automatically pick the ready node)
+            const player = await kazagumo.createPlayer({
+                guildId: guildId,
+                textId: state.textId,
+                voiceId: state.voiceId,
+                volume: state.volume || 30,
+                deaf: true
+            });
 
-                // Create player
-                const player = await kazagumo.createPlayer({
-                    guildId: guildId,
-                    textId: state.textId,
-                    voiceId: state.voiceId,
-                    volume: state.volume || 30,
-                    deaf: true
-                });
-
-                // Set settings
-                if (state.loop) player.setLoop(state.loop);
-
-                // Restore Queue
-                if (state.current) {
-                    player.queue.add(state.current);
-                    if (state.queue && state.queue.length > 0) {
-                        for (const track of state.queue) {
-                            player.queue.add(track);
-                        }
-                    }
-
-                    // Play and seek
-                    await player.play();
-                    if (state.position > 5000) {
-                        setTimeout(() => {
-                            try { player.seek(state.position); } catch (e) { }
-                        }, 2000);
+            // Restore Position & Queue
+            if (state.current) {
+                player.queue.add(state.current);
+                if (state.queue && state.queue.length > 0) {
+                    for (const track of state.queue) {
+                        player.queue.add(track);
                     }
                 }
 
-                console.log(`✅ Resumed playback in guild: ${guild.name}`);
-
-                const textChannel = client.channels.cache.get(state.textId);
-                if (textChannel) {
-                    const embed = new EmbedBuilder()
-                        .setColor(0x00FF00)
-                        .setDescription(`🔄 **Reconnected!** Resuming playback with **${player.queue.length + (player.queue.current ? 1 : 0)}** tracks.`)
-                        .setTimestamp();
-                    textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
-                }
-                savedVoiceStates.delete(guildId);
-
-            } catch (error) {
-                attempts++;
-                console.error(`❌ Resume attempt ${attempts} failed for ${guildId}:`, error.message);
-
-                if (attempts < maxAttempts) {
-                    console.log(`🔄 Retrying resume for ${guildId} in 5s...`);
-                    setTimeout(attemptResuming, 5000);
-                } else {
-                    savedVoiceStates.delete(guildId); // Give up
+                await player.play();
+                if (state.position > 5000) {
+                    setTimeout(() => {
+                        try { player.seek(state.position); } catch (e) { }
+                    }, 2000);
                 }
             }
-        };
 
-        await attemptResuming();
+            console.log(`✅ [Resume] Successfully resumed: ${guild.name}`);
+
+            const textChannel = client.channels.cache.get(state.textId);
+            if (textChannel) {
+                const embed = new EmbedBuilder()
+                    .setColor(0x00FF00)
+                    .setDescription(`🔄 **Reconnected!** Musik dilanjutkan otomatis.`)
+                    .setTimestamp();
+                textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
+            }
+            savedVoiceStates.delete(guildId);
+
+        } catch (error) {
+            console.error(`❌ [Resume] Failed for ${guildId}:`, error.message);
+            // If it's a session error, we retry once more after 5s
+            if (error.message.includes('Session')) {
+                setTimeout(rejoinVoiceChannels, 5000);
+                return;
+            }
+            savedVoiceStates.delete(guildId);
+        }
     }
 }
 
