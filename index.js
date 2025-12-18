@@ -53,12 +53,12 @@ const kazagumo = new Kazagumo({
         if (guild) guild.shard.send(payload);
     }
 }, new Connectors.DiscordJS(client), Nodes, {
-    reconnectTries: 5,
-    reconnectInterval: 5000,
+    reconnectTries: 999,           // Effectively infinite reconnect attempts
+    reconnectInterval: 10000,      // 10 seconds between attempts
     restTimeout: 60000,
     moveOnDisconnect: true,
     resume: true,
-    resumeTimeout: 30,
+    resumeTimeout: 60,             // Increased resume timeout
     resumeByLibrary: true,
 });
 
@@ -82,6 +82,43 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
         console.warn(`⚠️ Lavalink Node "${name}" disconnected`);
     }
 });
+
+// Backup reconnection mechanism - if Shoukaku's built-in reconnect fails
+let reconnectAttempts = 0;
+const MAX_RECONNECT_LOG = 10; // Only log first 10 attempts to avoid log spam
+
+function attemptReconnect() {
+    const connectedNodes = kazagumo.shoukaku.nodes.filter(node => node.state === 2); // 2 = CONNECTED
+
+    if (connectedNodes.size === 0) {
+        reconnectAttempts++;
+        if (reconnectAttempts <= MAX_RECONNECT_LOG) {
+            console.log(`🔄 [Backup Reconnect] Attempt ${reconnectAttempts} - No connected nodes, Shoukaku should be reconnecting...`);
+        }
+
+        // If Shoukaku has given up (after ~2.5 hours with 999 tries), force reconnect
+        if (reconnectAttempts > 900) {
+            console.log('🔄 [Backup Reconnect] Forcing node reconnect...');
+            kazagumo.shoukaku.nodes.forEach(node => {
+                if (node.state !== 2) { // Not connected
+                    try {
+                        node.connect();
+                    } catch (e) {
+                        console.error('Failed to force reconnect:', e.message);
+                    }
+                }
+            });
+        }
+    } else {
+        if (reconnectAttempts > 0) {
+            console.log(`✅ [Backup Reconnect] Lavalink reconnected after ${reconnectAttempts} checks!`);
+            reconnectAttempts = 0;
+        }
+    }
+}
+
+// Check connection every 30 seconds
+setInterval(attemptReconnect, 30000);
 
 // Store player messages to update/delete them later
 const playerMessages = new Map();
