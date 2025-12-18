@@ -96,6 +96,7 @@ function saveVoiceStates() {
             const current = player.queue.current;
             const queue = [...player.queue]; // Extract all tracks from queue
 
+            const guild = client.guilds.cache.get(guildId);
             savedVoiceStates.set(guildId, {
                 voiceId: player.voiceId,
                 textId: player.textId,
@@ -105,7 +106,7 @@ function saveVoiceStates() {
                 volume: player.volume,
                 loop: player.loop
             });
-            console.log(`💾 Saved state & queue for guild ${guildId}: ${queue.length + (current ? 1 : 0)} tracks`);
+            console.log(`💾 Saved state & queue for guild ${guild?.name || guildId}: ${queue.length + (current ? 1 : 0)} tracks`);
         }
     });
 }
