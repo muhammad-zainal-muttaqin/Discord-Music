@@ -470,6 +470,12 @@ async function sendAutoDeleteReply(interaction, embed) {
 
 // Player Events
 kazagumo.on('playerStart', async (player, track) => {
+    // Guard: Skip if track is null/undefined (can happen during Lavalink reconnection)
+    if (!track) {
+        console.warn(`⚠️ playerStart event received with null track for guild ${player.guildId}`);
+        return;
+    }
+    
     // Immediately clear any existing interval
     clearPlayerInterval(player.guildId);
 
