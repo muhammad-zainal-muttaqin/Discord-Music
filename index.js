@@ -489,6 +489,18 @@ function canSendEmptyNotice(guildId) {
     return true;
 }
 
+function stopPlaybackKeepVoice(player) {
+    if (!player) return;
+    player.queue.clear();
+    if (typeof player.stop === 'function') {
+        player.stop();
+        return;
+    }
+    if (player.playing || player.queue.current) {
+        try { player.skip(); } catch (e) { }
+    }
+}
+
 // Helper function to send a reply that auto-deletes after 5 seconds
 async function sendAutoDeleteReply(interaction, embed) {
     try {
@@ -897,8 +909,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             markSuppressEmptyNotice(guild.id);
             cleanupPlayerState(guild.id);
-
-            player.destroy();
+            stopPlaybackKeepVoice(player);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0x00FF00).setDescription('⏹️ Stopped and cleared the queue!')
             );
@@ -1168,9 +1179,9 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_stop':
             markSuppressEmptyNotice(guild.id);
             cleanupPlayerState(guild.id);
-            player.destroy();
+            stopPlaybackKeepVoice(player);
             await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and left the channel!')
+                new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and cleared the queue!')
             );
             break;
 
