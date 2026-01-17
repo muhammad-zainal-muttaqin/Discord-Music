@@ -63,10 +63,6 @@ const kazagumo = new Kazagumo({
 });
 
 // Kazagumo Events
-kazagumo.shoukaku.on('ready', (name) => {
-    console.log(`✅ Lavalink Node "${name}" connected!`);
-});
-
 kazagumo.shoukaku.on('error', (name, error) => {
     console.error(`❌ Lavalink Node "${name}" error:`, error);
 });
@@ -272,6 +268,13 @@ kazagumo.shoukaku.on('close', (name, code, reason) => {
 const playerMessages = new Map();
 // Store update intervals for each guild
 const playerIntervals = new Map();
+// Track empty-queue notices to prevent spam
+const emptyQueueNotifiedAt = new Map();
+// Suppress empty-queue notices for intentional stops
+const suppressEmptyNoticeUntil = new Map();
+
+const EMPTY_NOTICE_COOLDOWN_MS = 30000;
+const SUPPRESS_EMPTY_NOTICE_MS = 15000;
 
 // Helper function to create progress bar
 function createProgressBar(current, total, length = 12) {
@@ -456,6 +459,36 @@ function clearPlayerInterval(guildId) {
     }
 }
 
+function clearPlayerMessage(guildId) {
+    const playerMsg = playerMessages.get(guildId);
+    if (playerMsg) {
+        playerMsg.delete().catch(() => { });
+        playerMessages.delete(guildId);
+    }
+}
+
+function cleanupPlayerState(guildId) {
+    clearPlayerInterval(guildId);
+    clearPlayerMessage(guildId);
+}
+
+function markSuppressEmptyNotice(guildId) {
+    suppressEmptyNoticeUntil.set(guildId, Date.now() + SUPPRESS_EMPTY_NOTICE_MS);
+}
+
+function canSendEmptyNotice(guildId) {
+    const now = Date.now();
+    const suppressUntil = suppressEmptyNoticeUntil.get(guildId) || 0;
+    if (now < suppressUntil) return false;
+    if (suppressUntil > 0) suppressEmptyNoticeUntil.delete(guildId);
+
+    const lastNotified = emptyQueueNotifiedAt.get(guildId) || 0;
+    if (now - lastNotified < EMPTY_NOTICE_COOLDOWN_MS) return false;
+
+    emptyQueueNotifiedAt.set(guildId, now);
+    return true;
+}
+
 // Helper function to send a reply that auto-deletes after 5 seconds
 async function sendAutoDeleteReply(interaction, embed) {
     try {
@@ -478,6 +511,8 @@ kazagumo.on('playerStart', async (player, track) => {
     
     // Immediately clear any existing interval
     clearPlayerInterval(player.guildId);
+    emptyQueueNotifiedAt.delete(player.guildId);
+    suppressEmptyNoticeUntil.delete(player.guildId);
 
     const channel = client.channels.cache.get(player.textId);
     if (channel) {
@@ -548,14 +583,10 @@ kazagumo.on('playerEnd', (player) => {
 });
 
 kazagumo.on('playerEmpty', (player) => {
-    // Clear the update interval
-    clearPlayerInterval(player.guildId);
+    cleanupPlayerState(player.guildId);
 
-    // Delete the player message
-    const playerMsg = playerMessages.get(player.guildId);
-    if (playerMsg) {
-        playerMsg.delete().catch(() => { });
-        playerMessages.delete(player.guildId);
+    if (!canSendEmptyNotice(player.guildId)) {
+        return;
     }
 
     const channel = client.channels.cache.get(player.textId);
@@ -598,6 +629,8 @@ kazagumo.on('playerEmpty', (player) => {
 
 kazagumo.on('playerDestroy', (player) => {
     console.log(`🗑️ Player destroyed for guild: ${player.guildId}`);
+    cleanupPlayerState(player.guildId);
+    emptyQueueNotifiedAt.delete(player.guildId);
 });
 
 kazagumo.on('playerError', (player, error) => {
@@ -862,13 +895,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            // Clear interval and player message
-            clearPlayerInterval(guild.id);
-            const playerMsg = playerMessages.get(guild.id);
-            if (playerMsg) {
-                playerMsg.delete().catch(() => { });
-                playerMessages.delete(guild.id);
-            }
+            markSuppressEmptyNotice(guild.id);
+            cleanupPlayerState(guild.id);
 
             player.destroy();
             await sendAutoDeleteReply(interaction,
@@ -1060,13 +1088,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            // Clear interval and player message
-            clearPlayerInterval(guild.id);
-            const leavePlayerMsg = playerMessages.get(guild.id);
-            if (leavePlayerMsg) {
-                leavePlayerMsg.delete().catch(() => { });
-                playerMessages.delete(guild.id);
-            }
+            markSuppressEmptyNotice(guild.id);
+            cleanupPlayerState(guild.id);
 
             player.destroy();
             await sendAutoDeleteReply(interaction,
@@ -1143,14 +1166,8 @@ client.on(Events.InteractionCreate, async interaction => {
             break;
 
         case 'player_stop':
-            // Clear the update interval
-            clearPlayerInterval(guild.id);
-            // Delete player message
-            const playerMsg = playerMessages.get(guild.id);
-            if (playerMsg) {
-                playerMsg.delete().catch(() => { });
-                playerMessages.delete(guild.id);
-            }
+            markSuppressEmptyNotice(guild.id);
+            cleanupPlayerState(guild.id);
             player.destroy();
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and left the channel!')
