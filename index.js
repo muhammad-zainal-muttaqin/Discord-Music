@@ -53,13 +53,13 @@ const kazagumo = new Kazagumo({
         if (guild) guild.shard.send(payload);
     }
 }, new Connectors.DiscordJS(client), Nodes, {
-    reconnectTries: 999,           // Effectively infinite reconnect attempts
-    reconnectInterval: 10000,      // 10 seconds between attempts
-    restTimeout: 60000,
-    moveOnDisconnect: true,
-    resume: true,
-    resumeTimeout: 60,             // Increased resume timeout
-    resumeByLibrary: true,
+    reconnectTries: 0,             // Disable Shoukaku auto-reconnect (we handle it manually)
+    reconnectInterval: 5000,
+    restTimeout: 30000,
+    moveOnDisconnect: false,
+    resume: false,                 // Disable session resume - always create fresh connection
+    resumeTimeout: 0,
+    resumeByLibrary: false,
 });
 
 // Kazagumo Events
@@ -117,27 +117,77 @@ async function rejoinVoiceChannels() {
         return;
     }
 
+    // Wait extra time for node to be fully ready
+    const node = kazagumo.shoukaku.nodes.get('Lavalink');
+    if (!node || node.state !== 2) {
+        console.log(`⏳ [Resume] Node not ready yet, waiting...`);
+        if (resumeRetryCount < MAX_RESUME_RETRIES) {
+            resumeRetryCount++;
+            setTimeout(rejoinVoiceChannels, 3000);
+            return;
+        }
+    }
+
     console.log(`🔄 [Resume] Attempt ${resumeRetryCount + 1}/${MAX_RESUME_RETRIES} for ${savedVoiceStates.size} channel(s)...`);
 
     for (const [guildId, state] of savedVoiceStates) {
         try {
             const guild = client.guilds.cache.get(guildId);
-            if (!guild) { savedVoiceStates.delete(guildId); continue; }
+            if (!guild) {
+                console.log(`[Resume] Guild ${guildId} not found, removing from saved states`);
+                savedVoiceStates.delete(guildId);
+                continue;
+            }
 
             const voiceChannel = guild.channels.cache.get(state.voiceId);
-            if (!voiceChannel) { savedVoiceStates.delete(guildId); continue; }
+            if (!voiceChannel) {
+                console.log(`[Resume] Voice channel ${state.voiceId} not found, removing from saved states`);
+                savedVoiceStates.delete(guildId);
+                continue;
+            }
 
-            // Just remove from local cache, don't call Lavalink API (it will error)
-            kazagumo.players.delete(guildId);
+            // Check if bot already has a working player for this guild
+            const existingPlayer = kazagumo.players.get(guildId);
+            if (existingPlayer) {
+                console.log(`[Resume] Player already exists for ${guild.name}, skipping recreation`);
+                savedVoiceStates.delete(guildId);
+                continue;
+            }
 
-            // Create fresh player
-            const player = await kazagumo.createPlayer({
-                guildId: guildId,
-                textId: state.textId,
-                voiceId: state.voiceId,
-                volume: state.volume || 30,
-                deaf: true
-            });
+            console.log(`[Resume] Creating new player for ${guild.name}...`);
+
+            // Create fresh player with retry logic
+            let player;
+            let playerCreated = false;
+            let createAttempts = 0;
+            const maxCreateAttempts = 3;
+
+            while (!playerCreated && createAttempts < maxCreateAttempts) {
+                createAttempts++;
+                try {
+                    player = await kazagumo.createPlayer({
+                        guildId: guildId,
+                        textId: state.textId,
+                        voiceId: state.voiceId,
+                        volume: state.volume || 30,
+                        deaf: true
+                    });
+                    playerCreated = true;
+                } catch (createError) {
+                    console.error(`[Resume] Player creation attempt ${createAttempts} failed: ${createError.message}`);
+                    if (createAttempts < maxCreateAttempts) {
+                        await new Promise(r => setTimeout(r, 2000));
+                    } else {
+                        throw createError;
+                    }
+                }
+            }
+
+            if (!playerCreated || !player) {
+                throw new Error('Failed to create player after multiple attempts');
+            }
+
+            console.log(`[Resume] Player created for ${guild.name}, restoring queue...`);
 
             // Restore Queue
             if (state.current) {
@@ -148,11 +198,22 @@ async function rejoinVoiceChannels() {
                     }
                 }
 
+                console.log(`[Resume] Starting playback for ${guild.name}...`);
                 await player.play();
+
+                // Handle seek with proper delay and error handling
                 if (state.position > 5000) {
-                    setTimeout(() => {
-                        try { player.seek(state.position); } catch (e) { }
-                    }, 2000);
+                    setTimeout(async () => {
+                        try {
+                            const currentPlayer = kazagumo.players.get(guildId);
+                            if (currentPlayer && currentPlayer.queue.current) {
+                                await currentPlayer.seek(state.position);
+                                console.log(`[Resume] Seeked to ${state.position}ms for ${guild.name}`);
+                            }
+                        } catch (e) {
+                            console.log(`[Resume] Could not seek to position for guild ${guildId}: ${e.message}`);
+                        }
+                    }, 3000);
                 }
             }
 
@@ -162,7 +223,7 @@ async function rejoinVoiceChannels() {
             if (textChannel) {
                 const embed = new EmbedBuilder()
                     .setColor(0x00FF00)
-                    .setDescription(`🔄 **Reconnected!** Musik dilanjutkan otomatis.`)
+                    .setDescription('🔄 **Reconnected!** Musik dilanjutkan otomatis.')
                     .setTimestamp();
                 textChannel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => { }), 10000)).catch(() => { });
             }
@@ -171,19 +232,26 @@ async function rejoinVoiceChannels() {
             resumeRetryCount = 0;
 
         } catch (error) {
-            console.error(`❌ [Resume] Failed:`, error.message);
+            console.error(`❌ [Resume] Failed for guild ${guildId}:`, error.message);
 
-            resumeRetryCount++;
-            if (resumeRetryCount < MAX_RESUME_RETRIES) {
-                console.log(`🔄 [Resume] Retrying in 5s... (${resumeRetryCount}/${MAX_RESUME_RETRIES})`);
-                setTimeout(rejoinVoiceChannels, 5000);
-                return;
-            } else {
-                console.log(`❌ [Resume] Giving up after ${MAX_RESUME_RETRIES} attempts.`);
-                savedVoiceStates.clear();
-                resumeRetryCount = 0;
-            }
+            // Don't retry the same guild immediately, move to next
+            continue;
         }
+    }
+
+    // If there are still guilds left in saved states (failed ones), retry
+    if (savedVoiceStates.size > 0) {
+        resumeRetryCount++;
+        if (resumeRetryCount < MAX_RESUME_RETRIES) {
+            console.log(`🔄 [Resume] Retrying failed guilds in 5s... (${resumeRetryCount}/${MAX_RESUME_RETRIES})`);
+            setTimeout(rejoinVoiceChannels, 5000);
+        } else {
+            console.log(`❌ [Resume] Giving up after ${MAX_RESUME_RETRIES} attempts. Failed guilds: ${Array.from(savedVoiceStates.keys()).join(', ')}`);
+            savedVoiceStates.clear();
+            resumeRetryCount = 0;
+        }
+    } else {
+        resumeRetryCount = 0;
     }
 }
 
@@ -193,24 +261,28 @@ async function attemptReconnect() {
 
     // Safety check: Don't reconnect if Discord client is not ready (missing userId)
     if (!client.user?.id) {
-        // console.log('⏳ [Reconnect] Skipping attempt: Discord client not ready yet...');
         return;
     }
+
+    const node = kazagumo.shoukaku.nodes.get('Lavalink');
 
     // Check node states: 0=DISCONNECTED, 1=CONNECTING, 2=CONNECTED, 3=DISCONNECTING
-    let hasWorkingNode = false;
-    kazagumo.shoukaku.nodes.forEach(node => {
-        if (node.state === 1 || node.state === 2) {
-            hasWorkingNode = true;
+    if (node) {
+        // If node exists and is connected, nothing to do
+        if (node.state === 2) {
+            return;
         }
-    });
 
-    // If there's a node already connecting/connected, just wait
-    if (hasWorkingNode) {
-        return;
+        // If node is connecting, wait
+        if (node.state === 1) {
+            return;
+        }
+
+        // Node exists but is disconnected or disconnecting, need to remove it first
+        console.log(`🔄 [Reconnect] Node exists but state=${node.state}, removing...`);
     }
 
-    // Truly no node? Start reconnecting
+    // Truly no node or disconnected? Start reconnecting
     isReconnecting = true;
     reconnectAttempts++;
 
@@ -220,14 +292,33 @@ async function attemptReconnect() {
     console.log(`🔄 [Reconnect] Attempt ${reconnectAttempts} - No working nodes found. Force-adding node...`);
 
     try {
-        const existingNode = kazagumo.shoukaku.nodes.get('Lavalink');
-        if (existingNode) {
+        // Remove existing node if any
+        if (node) {
             intentionalClose = true;
-            try { kazagumo.shoukaku.removeNode('Lavalink'); } catch (e) { }
-            await new Promise(r => setTimeout(r, 1000));
+            try {
+                kazagumo.shoukaku.removeNode('Lavalink');
+                console.log(`🗑️ [Reconnect] Removed existing node`);
+            } catch (e) {
+                // Ignore errors during removal
+            }
+            await new Promise(r => setTimeout(r, 2000));
             intentionalClose = false;
         }
 
+        // Also destroy any existing players since they're definitely broken
+        if (kazagumo.players.size > 0) {
+            console.log(`🗑️ [Reconnect] Cleaning up ${kazagumo.players.size} stale player(s)`);
+            for (const [guildId, player] of kazagumo.players) {
+                try {
+                    // Just delete from map, don't call Lavalink API
+                    kazagumo.players.delete(guildId);
+                } catch (e) {
+                    // Ignore
+                }
+            }
+        }
+
+        // Add new node
         kazagumo.shoukaku.addNode({
             name: 'Lavalink',
             url: process.env.LAVALINK_HOST || 'localhost:2333',
@@ -238,30 +329,57 @@ async function attemptReconnect() {
     } catch (error) {
         console.error(`❌ Reconnect error:`, error.message);
     } finally {
-        // Allow next attempt after 15 seconds if still not connected
-        setTimeout(() => { isReconnecting = false; }, 15000);
+        // Allow next attempt after 10 seconds if still not connected
+        setTimeout(() => { isReconnecting = false; }, 10000);
     }
 }
 
-// Global Reconnect Interval
-setInterval(attemptReconnect, 30000);
+// Global Reconnect Interval - check every 20 seconds
+setInterval(() => {
+    const node = kazagumo.shoukaku.nodes.get('Lavalink');
+    if (!node || node.state === 0) {
+        // No node or disconnected, attempt reconnect
+        attemptReconnect();
+    }
+}, 20000);
 
 // Kazagumo Events
 kazagumo.shoukaku.on('ready', (name) => {
     console.log(`✅ Lavalink Node "${name}" connected!`);
     isReconnecting = false;
+
+    // Always reset reconnect attempts on successful connection
     if (reconnectAttempts > 0) {
         console.log(`✅ [Reconnect] Success after ${reconnectAttempts} attempts.`);
         reconnectAttempts = 0;
-        setTimeout(rejoinVoiceChannels, 3000);
     }
+
+    // Wait for node to be fully ready before resuming
+    setTimeout(() => {
+        const node = kazagumo.shoukaku.nodes.get('Lavalink');
+        if (node && node.state === 2) {
+            rejoinVoiceChannels();
+        } else {
+            console.log(`⏳ [Reconnect] Node not ready for resume, skipping...`);
+        }
+    }, 5000);
 });
 
 kazagumo.shoukaku.on('close', (name, code, reason) => {
     console.warn(`⚠️ Lavalink Node "${name}" closed: ${code} - ${reason}`);
-    if (intentionalClose || code === 1000) return;
+
+    // 1000 = normal closure, intentional
+    if (intentionalClose || code === 1000) {
+        console.log(`[Reconnect] Intentional close, not attempting reconnect`);
+        return;
+    }
+
+    // Save states immediately when connection closes
     saveVoiceStates();
-    setTimeout(attemptReconnect, 5000);
+
+    // Trigger reconnect after short delay
+    console.log(`🔄 [Reconnect] Will attempt reconnect in 3s...`);
+    setTimeout(attemptReconnect, 3000);
 });
 
 // Store player messages to update/delete them later
@@ -429,6 +547,12 @@ async function updatePlayerMessage(player) {
 
         await playerMsg.edit({ embeds: [embed], components });
     } catch (error) {
+        // Check if it's a session error - don't log as it's expected during reconnection
+        if (error.message?.includes('Session not found') || error.status === 404) {
+            // Session expired, clear interval to prevent further errors
+            clearPlayerInterval(player.guildId);
+            return;
+        }
         // Message might have been deleted, clear the interval
         console.error('Failed to update player message:', error.message);
         clearPlayerInterval(player.guildId);
@@ -443,7 +567,9 @@ function startPlayerInterval(player) {
     // Update every 10 seconds
     const interval = setInterval(() => {
         if (player && player.queue.current && !player.paused) {
-            updatePlayerMessage(player);
+            updatePlayerMessage(player).catch(() => {
+                // Errors are already logged in updatePlayerMessage
+            });
         }
     }, 10000);
 
@@ -493,7 +619,7 @@ function stopPlaybackKeepVoice(player) {
     if (!player) return;
     player.queue.clear();
     if (typeof player.stop === 'function') {
-        player.stop();
+        try { player.stop(); } catch (e) { }
         return;
     }
     if (player.playing || player.queue.current) {
@@ -893,10 +1019,16 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            player.skip();
-            await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
-            );
+            try {
+                player.skip();
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
+                );
+            } catch (e) {
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to skip. Please try again.')
+                );
+            }
             break;
         }
 
@@ -923,7 +1055,13 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            player.pause(true);
+            try {
+                player.pause(true);
+            } catch (e) {
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to pause. Please try again.')
+                );
+            }
             clearPlayerInterval(player.guildId);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')
@@ -939,7 +1077,13 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            player.pause(false);
+            try {
+                player.pause(false);
+            } catch (e) {
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to resume. Please try again.')
+                );
+            }
             startPlayerInterval(player);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
@@ -1017,7 +1161,13 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             const level = interaction.options.getInteger('level');
-            player.setVolume(level);
+            try {
+                player.setVolume(level);
+            } catch (e) {
+                return sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to set volume. Please try again.')
+                );
+            }
 
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume set to **${level}%**`)
@@ -1140,40 +1290,58 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_previous':
             // Go to beginning of current song (there's no previous track in Kazagumo by default)
             if (player.queue.current) {
-                player.seek(0);
-                await sendAutoDeleteReply(interaction,
-                    new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')
-                );
-                // Update player to show 0:00 position
-                updatePlayerMessage(player);
+                try {
+                    await player.seek(0);
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')
+                    );
+                    // Update player to show 0:00 position
+                    updatePlayerMessage(player);
+                } catch (e) {
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to restart track. Please try again.')
+                    );
+                }
             }
             break;
 
         case 'player_pause':
-            if (player.paused) {
-                player.pause(false);
-                // Restart the update interval when resuming
-                startPlayerInterval(player);
+            try {
+                if (player.paused) {
+                    player.pause(false);
+                    // Restart the update interval when resuming
+                    startPlayerInterval(player);
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
+                    );
+                } else {
+                    player.pause(true);
+                    // Stop updates while paused (saves resources)
+                    clearPlayerInterval(player.guildId);
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')
+                    );
+                }
+                // Update player to show paused/playing state and button icon
+                updatePlayerMessage(player);
+            } catch (e) {
                 await sendAutoDeleteReply(interaction,
-                    new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
-                );
-            } else {
-                player.pause(true);
-                // Stop updates while paused (saves resources)
-                clearPlayerInterval(player.guildId);
-                await sendAutoDeleteReply(interaction,
-                    new EmbedBuilder().setColor(0xFFFF00).setDescription('⏸️ Paused!')
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to toggle pause. Please try again.')
                 );
             }
-            // Update player to show paused/playing state and button icon
-            updatePlayerMessage(player);
             break;
 
         case 'player_skip':
-            player.skip();
-            await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
-            );
+            try {
+                player.skip();
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
+                );
+            } catch (e) {
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to skip. Please try again.')
+                );
+            }
             break;
 
         case 'player_stop':
@@ -1200,36 +1368,54 @@ client.on(Events.InteractionCreate, async interaction => {
             break;
 
         case 'player_voldown':
-            const newVolDown = Math.max(0, player.volume - 10);
-            player.setVolume(newVolDown);
-            await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)
-            );
-            // Update player to show new volume
-            updatePlayerMessage(player);
+            try {
+                const newVolDown = Math.max(0, player.volume - 10);
+                player.setVolume(newVolDown);
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription(`🔉 Volume: **${newVolDown}%**`)
+                );
+                // Update player to show new volume
+                updatePlayerMessage(player);
+            } catch (e) {
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to adjust volume.')
+                );
+            }
             break;
 
         case 'player_volup':
-            const newVolUp = Math.min(100, player.volume + 10);
-            player.setVolume(newVolUp);
-            await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)
-            );
-            // Update player to show new volume
-            updatePlayerMessage(player);
+            try {
+                const newVolUp = Math.min(100, player.volume + 10);
+                player.setVolume(newVolUp);
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription(`🔊 Volume: **${newVolUp}%**`)
+                );
+                // Update player to show new volume
+                updatePlayerMessage(player);
+            } catch (e) {
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to adjust volume.')
+                );
+            }
             break;
 
         case 'player_loop':
-            const modes = ['none', 'track', 'queue'];
-            const currentMode = player.loop || 'none';
-            const nextMode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
-            player.setLoop(nextMode);
-            const modeEmoji = nextMode === 'none' ? '➡️ Off' : nextMode === 'track' ? '🔂 Track' : '🔁 Queue';
-            await sendAutoDeleteReply(interaction,
-                new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)
-            );
-            // Update player to show loop button color change
-            updatePlayerMessage(player);
+            try {
+                const modes = ['none', 'track', 'queue'];
+                const currentMode = player.loop || 'none';
+                const nextMode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
+                player.setLoop(nextMode);
+                const modeEmoji = nextMode === 'none' ? '➡️ Off' : nextMode === 'track' ? '🔂 Track' : '🔁 Queue';
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0x00FF00).setDescription(`Loop: **${modeEmoji}**`)
+                );
+                // Update player to show loop button color change
+                updatePlayerMessage(player);
+            } catch (e) {
+                await sendAutoDeleteReply(interaction,
+                    new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to set loop mode.')
+                );
+            }
             break;
 
         case 'player_queue':
@@ -1373,14 +1559,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 break;
 
             case 'feature_restart':
-                player.seek(0);
-                await sendAutoDeleteReply(interaction,
-                    new EmbedBuilder()
-                        .setColor(0x00FF00)
-                        .setDescription('🔄 Restarted the current track!')
-                );
-                // Update player message
-                updatePlayerMessage(player);
+                try {
+                    await player.seek(0);
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder()
+                            .setColor(0x00FF00)
+                            .setDescription('🔄 Restarted the current track!')
+                    );
+                    // Update player message
+                    updatePlayerMessage(player);
+                } catch (e) {
+                    await sendAutoDeleteReply(interaction,
+                        new EmbedBuilder()
+                            .setColor(0xFF0000)
+                            .setDescription('❌ Failed to restart track.')
+                    );
+                }
                 break;
 
             case 'feature_stats':
