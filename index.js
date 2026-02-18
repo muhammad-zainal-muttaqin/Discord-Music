@@ -5,6 +5,11 @@ require('dotenv').config();
 
 // Global error handling to prevent crashes
 process.on('unhandledRejection', error => {
+    // Suppress expected session errors during Lavalink reconnection
+    if (error?.status === 404 && error?.path?.includes('/sessions/')) {
+        console.warn(`[Shoukaku] Session expired during reconnect, ignoring: ${error.path}`);
+        return;
+    }
     console.error('Unhandled Rejection:', error);
 });
 
@@ -80,6 +85,8 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
 let reconnectAttempts = 0;
 let isReconnecting = false;
 let intentionalClose = false;
+let reconnectBackoff = 3000;     // Start at 3s, doubles each failure up to MAX
+const MAX_RECONNECT_BACKOFF = 30000; // Cap at 30s
 
 // Store voice channel states and QUEUE for rejoin after reconnect
 const savedVoiceStates = new Map(); // guildId -> { voiceId, textId, current, queue, position }
@@ -347,6 +354,7 @@ setInterval(() => {
 kazagumo.shoukaku.on('ready', (name) => {
     console.log(`✅ Lavalink Node "${name}" connected!`);
     isReconnecting = false;
+    reconnectBackoff = 3000; // Reset backoff on successful connection
 
     // Always reset reconnect attempts on successful connection
     if (reconnectAttempts > 0) {
@@ -374,12 +382,20 @@ kazagumo.shoukaku.on('close', (name, code, reason) => {
         return;
     }
 
+    // Stop all player intervals IMMEDIATELY to prevent session/null REST errors
+    for (const [guildId] of kazagumo.players) {
+        clearPlayerInterval(guildId);
+    }
+
     // Save states immediately when connection closes
     saveVoiceStates();
 
-    // Trigger reconnect after short delay
-    console.log(`🔄 [Reconnect] Will attempt reconnect in 3s...`);
-    setTimeout(attemptReconnect, 3000);
+    // Trigger reconnect with exponential backoff
+    console.log(`🔄 [Reconnect] Will attempt reconnect in ${reconnectBackoff / 1000}s...`);
+    setTimeout(attemptReconnect, reconnectBackoff);
+
+    // Double the backoff for next time (capped at max)
+    reconnectBackoff = Math.min(reconnectBackoff * 2, MAX_RECONNECT_BACKOFF);
 });
 
 // Store player messages to update/delete them later
