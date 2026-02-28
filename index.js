@@ -109,6 +109,8 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
 // ACTIVE reconnection mechanism - actually reconnects when Lavalink is down
 let reconnectAttempts = 0;
 let isReconnecting = false;
+let reconnectAttemptInProgress = false; // Mutex: prevents concurrent attemptReconnect() calls
+let isStartingUp = true;               // True from boot until first 'ready' event fires
 let intentionalClose = false;
 let reconnectBackoff = 3000;     // Start at 3s, doubles each failure up to MAX
 const MAX_RECONNECT_BACKOFF = 30000; // Cap at 30s
@@ -416,7 +418,7 @@ async function rejoinVoiceChannels() {
 
 // MAIN Reconnect function
 async function attemptReconnect() {
-    if (isReconnecting) return;
+    if (reconnectAttemptInProgress) return;
 
     // Safety check: Don't reconnect if Discord client is not ready (missing userId)
     if (!client.user?.id) {
@@ -441,7 +443,8 @@ async function attemptReconnect() {
     }
 
     // Truly no node or disconnected? Start reconnecting
-    isReconnecting = true;
+    reconnectAttemptInProgress = true; // Acquire mutex
+    isReconnecting = true;             // User-facing: bot is in reconnect state
     reconnectAttempts++;
 
     // Save states if this is the first failure
@@ -489,7 +492,7 @@ async function attemptReconnect() {
         console.error(`❌ Reconnect error:`, error.message);
     } finally {
         // Allow next attempt after 10 seconds if still not connected
-        setTimeout(() => { isReconnecting = false; }, 10000);
+        setTimeout(() => { reconnectAttemptInProgress = false; }, 10000);
     }
 }
 
@@ -505,6 +508,8 @@ setInterval(() => {
 kazagumo.shoukaku.on('ready', (name) => {
     console.log(`✅ Lavalink Node "${name}" connected!`);
     isReconnecting = false;
+    reconnectAttemptInProgress = false; // Clear mutex in case ready fires mid-attempt
+    isStartingUp = false;               // Startup window is over
     reconnectBackoff = 3000; // Reset backoff on successful connection
 
     // Always reset reconnect attempts on successful connection
@@ -1104,9 +1109,19 @@ client.on(Events.InteractionCreate, async interaction => {
             try {
                 if (!isNodeOperational()) {
                     const node = getMainNode();
-                    console.warn(`[Play] Node not operational (state=${node?.state ?? 'none'}, session=${getNodeSessionId(node) ?? 'none'}, reconnecting=${isReconnecting})`);
+                    console.warn(`[Play] Node not operational (state=${node?.state ?? 'none'}, session=${getNodeSessionId(node) ?? 'none'}, reconnecting=${isReconnecting}, starting=${isStartingUp})`);
+
+                    let statusMessage;
+                    if (isStartingUp) {
+                        statusMessage = 'The music service is still starting up. Please try `/play` again in a few seconds.';
+                    } else if (isReconnecting) {
+                        statusMessage = 'Lavalink lost connection and is reconnecting. Please try `/play` again in a few seconds.';
+                    } else {
+                        statusMessage = 'The music service is temporarily unavailable. Please try `/play` again shortly.';
+                    }
+
                     await interaction.editReply({
-                        embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('Lavalink is reconnecting. Please try `/play` again in a few seconds.')]
+                        embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription(statusMessage)]
                     });
                     setTimeout(() => {
                         interaction.deleteReply().catch(() => { });
