@@ -131,7 +131,7 @@ function isNodeOperational() {
 
     const sessionId = getNodeSessionId(node);
     if (sessionId == null) return true;
-    if (typeof sessionId === 'string') return sessionId.length > 0 && sessionId !== 'null';
+    if (typeof sessionId === 'string') return sessionId !== 'null';
 
     return true;
 }
@@ -478,10 +478,13 @@ kazagumo.shoukaku.on('ready', (name) => {
 
     // Wait for node to be fully ready before resuming
     setTimeout(() => {
+        if (savedVoiceStates.size === 0) {
+            return;
+        }
         if (isNodeOperational()) {
             rejoinVoiceChannels();
         } else {
-            console.log(`⏳ [Reconnect] Node not ready for resume, skipping...`);
+            console.log(`[Reconnect] Node not ready for resume, skipping...`);
         }
     }, 5000);
 });
