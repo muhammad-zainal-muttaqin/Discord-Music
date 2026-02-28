@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, Events, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Shoukaku, Connectors } = require('shoukaku');
 const { Kazagumo, Plugins } = require('kazagumo');
+const http = require('node:http');
 require('dotenv').config();
 
 const LAVALINK_NODE_NAME = 'Lavalink';
@@ -101,7 +102,6 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
     if (moved) {
         console.log(`🔄 Lavalink Node "${name}" players moved to another node`);
     } else {
-        isReconnecting = true;
         console.warn(`⚠️ Lavalink Node "${name}" disconnected`);
     }
 });
@@ -116,6 +116,33 @@ const MAX_RECONNECT_BACKOFF = 30000; // Cap at 30s
 // Store voice channel states and QUEUE for rejoin after reconnect
 const savedVoiceStates = new Map(); // guildId -> { voiceId, textId, current, queue, position }
 
+function startHealthServer() {
+    const port = Number(process.env.PORT);
+    if (!Number.isFinite(port) || port <= 0) return null;
+
+    const server = http.createServer((req, res) => {
+        if (req.url === '/' || req.url === '/health') {
+            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('ok');
+            return;
+        }
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not Found');
+    });
+
+    server.on('error', error => {
+        console.error(`[Health] Server error: ${error.message}`);
+    });
+
+    server.listen(port, '0.0.0.0', () => {
+        console.log(`[Health] Listening on 0.0.0.0:${port}`);
+    });
+
+    return server;
+}
+
+const healthServer = startHealthServer();
+
 function getMainNode() {
     return kazagumo.shoukaku.nodes.get(LAVALINK_NODE_NAME);
 }
@@ -125,9 +152,19 @@ function getNodeSessionId(node) {
     return node.sessionId ?? node.sessionID ?? node.session?.id ?? null;
 }
 
+function isNodeStateConnected(node) {
+    const state = node?.state;
+    return state === 2 || state === '2' || state === 'CONNECTED' || state === 'connected';
+}
+
+function isNodeStateConnecting(node) {
+    const state = node?.state;
+    return state === 1 || state === '1' || state === 'CONNECTING' || state === 'connecting';
+}
+
 function isNodeOperational() {
     const node = getMainNode();
-    if (!node || node.state !== 2 || isReconnecting) return false;
+    if (!node || !isNodeStateConnected(node)) return false;
 
     const sessionId = getNodeSessionId(node);
     if (sessionId == null) return true;
@@ -395,7 +432,7 @@ async function attemptReconnect() {
 
     if (node) {
         // If node is connecting, wait
-        if (node.state === 1) {
+        if (isNodeStateConnecting(node)) {
             return;
         }
 
@@ -1066,6 +1103,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
             try {
                 if (!isNodeOperational()) {
+                    const node = getMainNode();
+                    console.warn(`[Play] Node not operational (state=${node?.state ?? 'none'}, session=${getNodeSessionId(node) ?? 'none'}, reconnecting=${isReconnecting})`);
                     await interaction.editReply({
                         embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('Lavalink is reconnecting. Please try `/play` again in a few seconds.')]
                     });
