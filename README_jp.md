@@ -253,11 +253,35 @@ logging:
 ### メッセージが自動削除されない
 - ボットが`Manage Messages`権限を持っていることを確認
 
+### `/play`のたびに「The music service is temporarily unavailable」
+- Shoukakuのstate値の誤りが原因です。Shoukaku 4.xは`CONNECTED=1`を使用しており、`2`ではありません。`index.js`の`isNodeStateConnected()`が`state === 1`を確認しているか確認してください。
+- Shoukakuをアップグレードした場合は、`Constants.ts`の`State`enumを必ず確認してください。
+
+### ボットが再接続でスタック / Lavalinkドロップ後に回復しない
+- `close`イベントが`isReconnecting=true`を設定し、`attemptReconnect()`もブロックしていたことが原因です。現在は別の`reconnectAttemptInProgress` mutexで修正されています。
+
+### ボットが起動中でも`/play`が「still starting up」を表示する
+- `isStartingUp`フラグは`ready`が発火した時のみクリアされます。`ready`が発火しない場合（例: Lavalinkに到達できない）、フラグは`true`のままになります。`LAVALINK_HOST`、`LAVALINK_PASSWORD`、`LAVALINK_SECURE`を確認してください。
+
+### Railway: パブリックURLと内部URLの使い分け
+- **内部URL** (`*.railway.internal`): ポート`2333`を使用、`LAVALINK_SECURE=false`を設定
+- **パブリックURL** (`*.up.railway.app`): ポート`443`を使用、`LAVALINK_SECURE=true`を設定
+
 ### プレイヤーパネルが更新されない
 - プレイヤーは再生中10秒ごとに更新
 - 音楽が一時停止されると更新も一時停止
 
 ## 🆕 新着情報
+
+### v2.2 - Lavalink再接続修正（2026年2月）
+
+- 🔧 **重大な修正: Shoukaku 4.xのstate enum** — Shoukaku 4.xは`CONNECTED=1`を使用しており、`2`ではありません。ボットが誤った値を確認していたため、接続済みの場合でも`isNodeOperational()`が常に`false`を返していました。これにより`/play`が常に「temporarily unavailable」を表示していました。
+- 🔧 **再接続mutexの修正** — `isReconnecting`を2つのフラグに分離: `isReconnecting`（ユーザー向け状態）と`reconnectAttemptInProgress`（関数mutex）。以前は`close`イベントが`isReconnecting=true`を設定し、`attemptReconnect()`が即座にreturnするため、ボットがLavalinkのドロップから自己回復できませんでした。
+- 🔧 **mutexタイムアウトの修正** — 10秒のmutexタイムアウトが失敗した再接続後の正当な再試行をブロックしていました（例: Lavalink起動中の502）。mutexは`addNode()`後すぐに解放されるようになりました。
+- ✨ **よりスマートな`/play`ステータスメッセージ** — ボットはコンテキストに応じたメッセージを表示: 初回起動時は「still starting up」、セッション中のドロップ時は「lost connection and is reconnecting」、その他の場合は「temporarily unavailable」。
+- ✨ **`isStartingUp`フラグ** — 初回起動とセッション中の再接続を区別し、ユーザーに正確なステータスメッセージを提供します。
+
+> **メンテナー向けメモ:** Shoukakuをアップグレードする場合は、`node_modules/shoukaku/src/Constants.ts`の`State`enum値を必ず確認してください。バージョンによって数値が異なります。現在の値（Shoukaku 4.x）: `CONNECTING=0`、`CONNECTED=1`、`DISCONNECTING=2`、`DISCONNECTED=3`。
 
 ### v2.1 - YouTube OAuthとリモート暗号（2025年12月）
 - 🔐 YouTube認証のOAuthサポート（「サインインしてください」エラーを回避）

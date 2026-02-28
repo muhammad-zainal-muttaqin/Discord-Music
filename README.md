@@ -252,11 +252,35 @@ logging:
 ### Messages not auto-deleting
 - Ensure the bot has `Manage Messages` permission
 
+### "The music service is temporarily unavailable" on every `/play`
+- This was caused by a wrong Shoukaku state value. Shoukaku 4.x uses `CONNECTED=1`, not `2`. Check `isNodeStateConnected()` in `index.js` — it must check `state === 1`.
+- If you upgraded Shoukaku, always verify the `State` enum in its `Constants.ts`.
+
+### Bot stuck reconnecting / never recovers after Lavalink drop
+- Caused by the `isReconnecting` flag being set by the `close` event, which also blocked `attemptReconnect()` from running. Now fixed with a separate `reconnectAttemptInProgress` mutex.
+
+### `/play` shows "still starting up" even after bot is running
+- The `isStartingUp` flag is only cleared when `ready` fires. If `ready` never fires (e.g., Lavalink not reachable), the flag stays `true`. Check that `LAVALINK_HOST`, `LAVALINK_PASSWORD`, and `LAVALINK_SECURE` are correct.
+
+### Railway: using public URL vs internal URL
+- **Internal URL** (`*.railway.internal`): use port `2333`, set `LAVALINK_SECURE=false`
+- **Public URL** (`*.up.railway.app`): use port `443`, set `LAVALINK_SECURE=true`
+
 ### Player panel not updating
 - The player updates every 10 seconds while playing
 - Updates pause when music is paused
 
 ## 🆕 What's New
+
+### v2.2 - Lavalink Reconnection Fixes (February 2026)
+
+- 🔧 **Critical fix: Shoukaku 4.x state enum** — Shoukaku 4.x uses `CONNECTED=1`, not `2`. The bot was checking the wrong value, so `isNodeOperational()` always returned `false` even when fully connected. This caused `/play` to always show "temporarily unavailable".
+- 🔧 **Fixed reconnect mutex** — Split `isReconnecting` into two separate flags: `isReconnecting` (user-facing state) and `reconnectAttemptInProgress` (function mutex). Previously, the `close` event set `isReconnecting=true`, which caused `attemptReconnect()` to return immediately — the bot could never self-recover from a mid-session Lavalink drop.
+- 🔧 **Fixed mutex timeout** — The 10-second mutex timeout was blocking legitimate retry attempts after a failed reconnect (e.g., 502 during Lavalink startup). Mutex is now released immediately after `addNode()`.
+- ✨ **Smarter `/play` status messages** — Bot now shows context-aware messages: "still starting up" on first boot, "lost connection and is reconnecting" on mid-session drops, or "temporarily unavailable" for other cases.
+- ✨ **`isStartingUp` flag** — Distinguishes fresh boot from mid-session reconnect so users get accurate status messages.
+
+> **Note for maintainers:** If you upgrade Shoukaku, always verify the `State` enum values in `node_modules/shoukaku/src/Constants.ts`. The state numbers differ between versions. Current values (Shoukaku 4.x): `CONNECTING=0`, `CONNECTED=1`, `DISCONNECTING=2`, `DISCONNECTED=3`.
 
 ### v2.1 - YouTube OAuth & Remote Cipher (December 2025)
 - 🔐 OAuth support for YouTube authentication (bypasses "Please sign in" errors)

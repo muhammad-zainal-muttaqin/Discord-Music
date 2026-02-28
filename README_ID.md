@@ -252,11 +252,35 @@ logging:
 ### Pesan tidak otomatis terhapus
 - Pastikan bot memiliki permission `Manage Messages`
 
+### "The music service is temporarily unavailable" setiap `/play`
+- Disebabkan oleh nilai state Shoukaku yang salah. Shoukaku 4.x menggunakan `CONNECTED=1`, bukan `2`. Periksa `isNodeStateConnected()` di `index.js` — harus memeriksa `state === 1`.
+- Jika Anda upgrade Shoukaku, selalu verifikasi enum `State` di `Constants.ts`-nya.
+
+### Bot stuck reconnecting / tidak pernah pulih setelah Lavalink drop
+- Disebabkan oleh flag `isReconnecting` yang diset oleh event `close`, yang juga memblokir `attemptReconnect()`. Sekarang sudah diperbaiki dengan mutex `reconnectAttemptInProgress` yang terpisah.
+
+### `/play` menampilkan "masih starting up" padahal bot sudah berjalan
+- Flag `isStartingUp` hanya dikosongkan saat `ready` terpicu. Jika `ready` tidak pernah terpicu (misal Lavalink tidak bisa diakses), flag tetap `true`. Periksa `LAVALINK_HOST`, `LAVALINK_PASSWORD`, dan `LAVALINK_SECURE`.
+
+### Railway: penggunaan public URL vs internal URL
+- **Internal URL** (`*.railway.internal`): gunakan port `2333`, set `LAVALINK_SECURE=false`
+- **Public URL** (`*.up.railway.app`): gunakan port `443`, set `LAVALINK_SECURE=true`
+
 ### Panel player tidak update
 - Player update setiap 10 detik saat bermain
 - Update berhenti saat musik di-pause
 
 ## 🆕 Yang Baru
+
+### v2.2 - Perbaikan Reconneksi Lavalink (Februari 2026)
+
+- 🔧 **Fix kritis: state enum Shoukaku 4.x** — Shoukaku 4.x menggunakan `CONNECTED=1`, bukan `2`. Bot memeriksa nilai yang salah, sehingga `isNodeOperational()` selalu mengembalikan `false` meskipun sudah terhubung. Ini menyebabkan `/play` selalu menampilkan "temporarily unavailable".
+- 🔧 **Fix mutex reconnect** — Memisahkan `isReconnecting` menjadi dua flag: `isReconnecting` (status user-facing) dan `reconnectAttemptInProgress` (function mutex). Sebelumnya, event `close` mengeset `isReconnecting=true` sehingga `attemptReconnect()` langsung return — bot tidak bisa pulih sendiri dari Lavalink yang drop.
+- 🔧 **Fix timeout mutex** — Timeout mutex 10 detik memblokir percobaan reconnect ulang setelah gagal (misal 502 saat Lavalink startup). Mutex sekarang dirilis langsung setelah `addNode()`.
+- ✨ **Pesan status `/play` yang lebih informatif** — Bot sekarang menampilkan pesan sesuai konteks: "masih starting up" saat boot pertama, "kehilangan koneksi dan sedang reconnect" saat drop di tengah sesi, atau "sementara tidak tersedia" untuk kasus lainnya.
+- ✨ **Flag `isStartingUp`** — Membedakan boot pertama dari reconnect mid-session agar pengguna mendapat pesan status yang akurat.
+
+> **Catatan untuk maintainer:** Jika Anda upgrade Shoukaku, selalu verifikasi nilai enum `State` di `node_modules/shoukaku/src/Constants.ts`. Angkanya berbeda antar versi. Nilai saat ini (Shoukaku 4.x): `CONNECTING=0`, `CONNECTED=1`, `DISCONNECTING=2`, `DISCONNECTED=3`.
 
 ### v2.1 - YouTube OAuth & Remote Cipher (Desember 2025)
 - 🔐 Dukungan OAuth untuk autentikasi YouTube (bypass error "Please sign in")
