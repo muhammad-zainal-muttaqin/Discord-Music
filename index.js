@@ -155,13 +155,14 @@ function getNodeSessionId(node) {
 }
 
 function isNodeStateConnected(node) {
+    // Shoukaku 4.x: CONNECTING=0, CONNECTED=1, DISCONNECTING=2, DISCONNECTED=3
     const state = node?.state;
-    return state === 2 || state === '2' || state === 'CONNECTED' || state === 'connected';
+    return state === 1 || state === '1' || state === 'CONNECTED' || state === 'connected';
 }
 
 function isNodeStateConnecting(node) {
     const state = node?.state;
-    return state === 1 || state === '1' || state === 'CONNECTING' || state === 'connecting';
+    return state === 0 || state === '0' || state === 'CONNECTING' || state === 'connecting';
 }
 
 function isNodeOperational() {
@@ -427,7 +428,7 @@ async function attemptReconnect() {
 
     const node = getMainNode();
 
-    // Check node states: 0=DISCONNECTED, 1=CONNECTING, 2=CONNECTED, 3=DISCONNECTING
+    // Check node states (Shoukaku 4.x): 0=CONNECTING, 1=CONNECTED, 2=DISCONNECTING, 3=DISCONNECTED
     if (isNodeOperational()) {
         return;
     }
