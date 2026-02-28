@@ -3,11 +3,35 @@ const { Shoukaku, Connectors } = require('shoukaku');
 const { Kazagumo, Plugins } = require('kazagumo');
 require('dotenv').config();
 
+const LAVALINK_NODE_NAME = 'Lavalink';
+
+function isSessionError(error) {
+    if (!error) return false;
+    const message = String(error.message || '').toLowerCase();
+    const path = String(error.path || '').toLowerCase();
+    return (
+        (error.status === 404 && path.includes('/sessions/')) ||
+        path.includes('/sessions/null/') ||
+        message.includes('session not found') ||
+        message.includes('session expired')
+    );
+}
+
+function isAlreadyDestroyedError(error) {
+    if (!error) return false;
+    const message = String(error.message || '').toLowerCase();
+    return message.includes('already destroyed');
+}
+
 // Global error handling to prevent crashes
 process.on('unhandledRejection', error => {
-    // Suppress expected session errors during Lavalink reconnection
-    if (error?.status === 404 && error?.path?.includes('/sessions/')) {
-        console.warn(`[Shoukaku] Session expired during reconnect, ignoring: ${error.path}`);
+    // Suppress expected transient player/session errors during reconnection
+    if (isSessionError(error)) {
+        console.warn(`[Shoukaku] Session expired during reconnect, ignoring: ${error.path || error.message}`);
+        return;
+    }
+    if (isAlreadyDestroyedError(error)) {
+        console.warn(`[Kazagumo] Player already destroyed, ignoring duplicate destroy.`);
         return;
     }
     console.error('Unhandled Rejection:', error);
@@ -31,7 +55,7 @@ process.on('SIGINT', () => {
 // Lavalink Nodes Configuration
 const Nodes = [
     {
-        name: 'Lavalink',
+        name: LAVALINK_NODE_NAME,
         url: process.env.LAVALINK_HOST || 'localhost:2333',
         auth: process.env.LAVALINK_PASSWORD || 'youshallnotpass',
         secure: process.env.LAVALINK_SECURE === 'true' || false
@@ -77,6 +101,7 @@ kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
     if (moved) {
         console.log(`🔄 Lavalink Node "${name}" players moved to another node`);
     } else {
+        isReconnecting = true;
         console.warn(`⚠️ Lavalink Node "${name}" disconnected`);
     }
 });
@@ -90,6 +115,87 @@ const MAX_RECONNECT_BACKOFF = 30000; // Cap at 30s
 
 // Store voice channel states and QUEUE for rejoin after reconnect
 const savedVoiceStates = new Map(); // guildId -> { voiceId, textId, current, queue, position }
+
+function getMainNode() {
+    return kazagumo.shoukaku.nodes.get(LAVALINK_NODE_NAME);
+}
+
+function getNodeSessionId(node) {
+    if (!node) return null;
+    return node.sessionId ?? node.sessionID ?? node.session?.id ?? null;
+}
+
+function isNodeOperational() {
+    const node = getMainNode();
+    if (!node || node.state !== 2 || isReconnecting) return false;
+
+    const sessionId = getNodeSessionId(node);
+    if (sessionId == null) return true;
+    if (typeof sessionId === 'string') return sessionId.length > 0 && sessionId !== 'null';
+
+    return true;
+}
+
+async function safePlayerAction(player, actionName, fn, options = {}) {
+    const { throwOnError = true } = options;
+    const guildId = player?.guildId;
+
+    if (!player) return { ok: false, reason: 'missing-player' };
+
+    if (!isNodeOperational()) {
+        if (guildId) clearPlayerInterval(guildId);
+        return { ok: false, reason: 'node-not-ready' };
+    }
+
+    try {
+        const value = await fn();
+        return { ok: true, value };
+    } catch (error) {
+        if (isSessionError(error)) {
+            if (guildId) cleanupPlayerState(guildId);
+            return { ok: false, reason: 'session-expired', error };
+        }
+        if (isAlreadyDestroyedError(error)) {
+            if (guildId) cleanupPlayerState(guildId);
+            return { ok: false, reason: 'already-destroyed', error };
+        }
+
+        if (throwOnError) throw error;
+        console.error(`[Player] Failed ${actionName} in guild ${guildId}:`, error.message || error);
+        return { ok: false, reason: 'error', error };
+    }
+}
+
+async function safeDestroyPlayer(guildId, player) {
+    if (!player) return { ok: false, reason: 'missing-player' };
+
+    const currentPlayer = kazagumo.players.get(guildId);
+    if (currentPlayer && currentPlayer !== player) {
+        cleanupPlayerState(guildId);
+        return { ok: false, reason: 'stale-player' };
+    }
+
+    if (!isNodeOperational()) {
+        kazagumo.players.delete(guildId);
+        cleanupPlayerState(guildId);
+        return { ok: false, reason: 'node-not-ready' };
+    }
+
+    try {
+        await player.destroy();
+        cleanupPlayerState(guildId);
+        return { ok: true };
+    } catch (error) {
+        if (isSessionError(error) || isAlreadyDestroyedError(error)) {
+            kazagumo.players.delete(guildId);
+            cleanupPlayerState(guildId);
+            return { ok: false, reason: isSessionError(error) ? 'session-expired' : 'already-destroyed', error };
+        }
+        console.error(`[Player] Failed destroy in guild ${guildId}:`, error.message || error);
+        cleanupPlayerState(guildId);
+        return { ok: false, reason: 'error', error };
+    }
+}
 
 // Save current voice states AND queue before disconnect
 function saveVoiceStates() {
@@ -125,8 +231,7 @@ async function rejoinVoiceChannels() {
     }
 
     // Wait extra time for node to be fully ready
-    const node = kazagumo.shoukaku.nodes.get('Lavalink');
-    if (!node || node.state !== 2) {
+    if (!isNodeOperational()) {
         console.log(`⏳ [Resume] Node not ready yet, waiting...`);
         if (resumeRetryCount < MAX_RESUME_RETRIES) {
             resumeRetryCount++;
@@ -139,6 +244,11 @@ async function rejoinVoiceChannels() {
 
     for (const [guildId, state] of savedVoiceStates) {
         try {
+            if (!isNodeOperational()) {
+                console.log('[Resume] Node became unavailable during resume pass, retrying later...');
+                break;
+            }
+
             const guild = client.guilds.cache.get(guildId);
             if (!guild) {
                 console.log(`[Resume] Guild ${guildId} not found, removing from saved states`);
@@ -206,7 +316,10 @@ async function rejoinVoiceChannels() {
                 }
 
                 console.log(`[Resume] Starting playback for ${guild.name}...`);
-                await player.play();
+                const playResult = await safePlayerAction(player, 'resume-play', () => player.play(), { throwOnError: false });
+                if (!playResult.ok) {
+                    throw new Error(`Playback resume skipped (${playResult.reason})`);
+                }
 
                 // Handle seek with proper delay and error handling
                 if (state.position > 5000) {
@@ -214,8 +327,10 @@ async function rejoinVoiceChannels() {
                         try {
                             const currentPlayer = kazagumo.players.get(guildId);
                             if (currentPlayer && currentPlayer.queue.current) {
-                                await currentPlayer.seek(state.position);
-                                console.log(`[Resume] Seeked to ${state.position}ms for ${guild.name}`);
+                                const seekResult = await safePlayerAction(currentPlayer, 'resume-seek', () => currentPlayer.seek(state.position), { throwOnError: false });
+                                if (seekResult.ok) {
+                                    console.log(`[Resume] Seeked to ${state.position}ms for ${guild.name}`);
+                                }
                             }
                         } catch (e) {
                             console.log(`[Resume] Could not seek to position for guild ${guildId}: ${e.message}`);
@@ -271,15 +386,14 @@ async function attemptReconnect() {
         return;
     }
 
-    const node = kazagumo.shoukaku.nodes.get('Lavalink');
+    const node = getMainNode();
 
     // Check node states: 0=DISCONNECTED, 1=CONNECTING, 2=CONNECTED, 3=DISCONNECTING
-    if (node) {
-        // If node exists and is connected, nothing to do
-        if (node.state === 2) {
-            return;
-        }
+    if (isNodeOperational()) {
+        return;
+    }
 
+    if (node) {
         // If node is connecting, wait
         if (node.state === 1) {
             return;
@@ -303,7 +417,7 @@ async function attemptReconnect() {
         if (node) {
             intentionalClose = true;
             try {
-                kazagumo.shoukaku.removeNode('Lavalink');
+                kazagumo.shoukaku.removeNode(LAVALINK_NODE_NAME);
                 console.log(`🗑️ [Reconnect] Removed existing node`);
             } catch (e) {
                 // Ignore errors during removal
@@ -315,8 +429,9 @@ async function attemptReconnect() {
         // Also destroy any existing players since they're definitely broken
         if (kazagumo.players.size > 0) {
             console.log(`🗑️ [Reconnect] Cleaning up ${kazagumo.players.size} stale player(s)`);
-            for (const [guildId, player] of kazagumo.players) {
+            for (const [guildId] of kazagumo.players) {
                 try {
+                    cleanupPlayerState(guildId);
                     // Just delete from map, don't call Lavalink API
                     kazagumo.players.delete(guildId);
                 } catch (e) {
@@ -327,7 +442,7 @@ async function attemptReconnect() {
 
         // Add new node
         kazagumo.shoukaku.addNode({
-            name: 'Lavalink',
+            name: LAVALINK_NODE_NAME,
             url: process.env.LAVALINK_HOST || 'localhost:2333',
             auth: process.env.LAVALINK_PASSWORD || 'youshallnotpass',
             secure: process.env.LAVALINK_SECURE === 'true' || false
@@ -343,8 +458,7 @@ async function attemptReconnect() {
 
 // Global Reconnect Interval - check every 20 seconds
 setInterval(() => {
-    const node = kazagumo.shoukaku.nodes.get('Lavalink');
-    if (!node || node.state === 0) {
+    if (!isNodeOperational()) {
         // No node or disconnected, attempt reconnect
         attemptReconnect();
     }
@@ -364,8 +478,7 @@ kazagumo.shoukaku.on('ready', (name) => {
 
     // Wait for node to be fully ready before resuming
     setTimeout(() => {
-        const node = kazagumo.shoukaku.nodes.get('Lavalink');
-        if (node && node.state === 2) {
+        if (isNodeOperational()) {
             rejoinVoiceChannels();
         } else {
             console.log(`⏳ [Reconnect] Node not ready for resume, skipping...`);
@@ -381,6 +494,8 @@ kazagumo.shoukaku.on('close', (name, code, reason) => {
         console.log(`[Reconnect] Intentional close, not attempting reconnect`);
         return;
     }
+
+    isReconnecting = true;
 
     // Stop all player intervals IMMEDIATELY to prevent session/null REST errors
     for (const [guildId] of kazagumo.players) {
@@ -552,10 +667,16 @@ function buildPlayerComponents(player) {
 
 // Function to update the player message
 async function updatePlayerMessage(player) {
+    if (!player || !player.guildId || !player.queue) return;
+
     const playerMsg = playerMessages.get(player.guildId);
     const track = player.queue.current;
 
     if (!playerMsg || !track) return;
+    if (!isNodeOperational()) {
+        clearPlayerInterval(player.guildId);
+        return;
+    }
 
     try {
         const embed = buildPlayerEmbed(player, track);
@@ -564,9 +685,9 @@ async function updatePlayerMessage(player) {
         await playerMsg.edit({ embeds: [embed], components });
     } catch (error) {
         // Check if it's a session error - don't log as it's expected during reconnection
-        if (error.message?.includes('Session not found') || error.status === 404) {
+        if (isSessionError(error)) {
             // Session expired, clear interval to prevent further errors
-            clearPlayerInterval(player.guildId);
+            cleanupPlayerState(player.guildId);
             return;
         }
         // Message might have been deleted, clear the interval
@@ -577,11 +698,17 @@ async function updatePlayerMessage(player) {
 
 // Function to start the update interval
 function startPlayerInterval(player) {
+    if (!player || !player.guildId) return;
+
     // Clear any existing interval
     clearPlayerInterval(player.guildId);
 
     // Update every 10 seconds
     const interval = setInterval(() => {
+        if (!isNodeOperational()) {
+            clearPlayerInterval(player.guildId);
+            return;
+        }
         if (player && player.queue.current && !player.paused) {
             updatePlayerMessage(player).catch(() => {
                 // Errors are already logged in updatePlayerMessage
@@ -631,15 +758,17 @@ function canSendEmptyNotice(guildId) {
     return true;
 }
 
-function stopPlaybackKeepVoice(player) {
+async function stopPlaybackKeepVoice(player) {
     if (!player) return;
     player.queue.clear();
+
     if (typeof player.stop === 'function') {
-        try { player.stop(); } catch (e) { }
+        await safePlayerAction(player, 'stop', () => player.stop(), { throwOnError: false });
         return;
     }
+
     if (player.playing || player.queue.current) {
-        try { player.skip(); } catch (e) { }
+        await safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
     }
 }
 
@@ -933,6 +1062,16 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.deferReply();
 
             try {
+                if (!isNodeOperational()) {
+                    await interaction.editReply({
+                        embeds: [new EmbedBuilder().setColor(0xFFFF00).setDescription('Lavalink is reconnecting. Please try `/play` again in a few seconds.')]
+                    });
+                    setTimeout(() => {
+                        interaction.deleteReply().catch(() => { });
+                    }, 5000);
+                    return;
+                }
+
                 // Create player if doesn't exist
                 if (!player) {
                     player = await kazagumo.createPlayer({
@@ -1013,7 +1152,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 // Start playing if not already
                 if (!player.playing && !player.paused) {
-                    player.play();
+                    const playResult = await safePlayerAction(player, 'play', () => player.play(), { throwOnError: false });
+                    if (!playResult.ok) {
+                        console.warn(`[Play] Playback deferred for guild ${guild.id}: ${playResult.reason}`);
+                    }
                 }
             } catch (error) {
                 console.error('Play error:', error);
@@ -1036,7 +1178,7 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             try {
-                player.skip();
+                await safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
                 await sendAutoDeleteReply(interaction,
                     new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
                 );
@@ -1057,7 +1199,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             markSuppressEmptyNotice(guild.id);
             cleanupPlayerState(guild.id);
-            stopPlaybackKeepVoice(player);
+            await stopPlaybackKeepVoice(player);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0x00FF00).setDescription('⏹️ Stopped and cleared the queue!')
             );
@@ -1072,7 +1214,7 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             try {
-                player.pause(true);
+                await safePlayerAction(player, 'pause', () => player.pause(true), { throwOnError: false });
             } catch (e) {
                 return sendAutoDeleteReply(interaction,
                     new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to pause. Please try again.')
@@ -1094,7 +1236,7 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             try {
-                player.pause(false);
+                await safePlayerAction(player, 'resume', () => player.pause(false), { throwOnError: false });
             } catch (e) {
                 return sendAutoDeleteReply(interaction,
                     new EmbedBuilder().setColor(0xFF0000).setDescription('❌ Failed to resume. Please try again.')
@@ -1268,7 +1410,7 @@ client.on(Events.InteractionCreate, async interaction => {
             markSuppressEmptyNotice(guild.id);
             cleanupPlayerState(guild.id);
 
-            player.destroy();
+            await safeDestroyPlayer(guild.id, player);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0x00FF00).setDescription('👋 Left the voice channel!')
             );
@@ -1307,7 +1449,7 @@ client.on(Events.InteractionCreate, async interaction => {
             // Go to beginning of current song (there's no previous track in Kazagumo by default)
             if (player.queue.current) {
                 try {
-                    await player.seek(0);
+                    await safePlayerAction(player, 'seek-to-start', () => player.seek(0), { throwOnError: false });
                     await sendAutoDeleteReply(interaction,
                         new EmbedBuilder().setColor(0x00FF00).setDescription('⏮️ Restarted current track!')
                     );
@@ -1324,14 +1466,14 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_pause':
             try {
                 if (player.paused) {
-                    player.pause(false);
+                    await safePlayerAction(player, 'resume', () => player.pause(false), { throwOnError: false });
                     // Restart the update interval when resuming
                     startPlayerInterval(player);
                     await sendAutoDeleteReply(interaction,
                         new EmbedBuilder().setColor(0x00FF00).setDescription('▶️ Resumed!')
                     );
                 } else {
-                    player.pause(true);
+                    await safePlayerAction(player, 'pause', () => player.pause(true), { throwOnError: false });
                     // Stop updates while paused (saves resources)
                     clearPlayerInterval(player.guildId);
                     await sendAutoDeleteReply(interaction,
@@ -1349,7 +1491,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         case 'player_skip':
             try {
-                player.skip();
+                await safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
                 await sendAutoDeleteReply(interaction,
                     new EmbedBuilder().setColor(0x00FF00).setDescription('⏭️ Skipped!')
                 );
@@ -1363,7 +1505,7 @@ client.on(Events.InteractionCreate, async interaction => {
         case 'player_stop':
             markSuppressEmptyNotice(guild.id);
             cleanupPlayerState(guild.id);
-            stopPlaybackKeepVoice(player);
+            await stopPlaybackKeepVoice(player);
             await sendAutoDeleteReply(interaction,
                 new EmbedBuilder().setColor(0xFF0000).setDescription('⏹️ Stopped and cleared the queue!')
             );
@@ -1576,7 +1718,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             case 'feature_restart':
                 try {
-                    await player.seek(0);
+                    await safePlayerAction(player, 'seek-to-start', () => player.seek(0), { throwOnError: false });
                     await sendAutoDeleteReply(interaction,
                         new EmbedBuilder()
                             .setColor(0x00FF00)
