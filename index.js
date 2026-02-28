@@ -491,8 +491,8 @@ async function attemptReconnect() {
     } catch (error) {
         console.error(`❌ Reconnect error:`, error.message);
     } finally {
-        // Allow next attempt after 10 seconds if still not connected
-        setTimeout(() => { reconnectAttemptInProgress = false; }, 10000);
+        // Release mutex immediately — isNodeStateConnecting() guards against concurrent addNode() calls
+        reconnectAttemptInProgress = false;
     }
 }
 
