@@ -306,9 +306,13 @@ async function rejoinVoiceChannels() {
             // Check if bot already has a working player for this guild
             const existingPlayer = kazagumo.players.get(guildId);
             if (existingPlayer) {
-                console.log(`[Resume] Player already exists for ${guild.name}, skipping recreation`);
-                savedVoiceStates.delete(guildId);
-                continue;
+                console.log(`[Resume] Destroying stale player for ${guild.name} before recreation`);
+                try {
+                    await safeDestroyPlayer(guildId, existingPlayer);
+                } catch (e) {
+                    cleanupPlayerState(guildId);
+                    kazagumo.players.delete(guildId);
+                }
             }
 
             console.log(`[Resume] Creating new player for ${guild.name}...`);
@@ -358,6 +362,11 @@ async function rejoinVoiceChannels() {
                 console.log(`[Resume] Starting playback for ${guild.name}...`);
                 const playResult = await safePlayerAction(player, 'resume-play', () => player.play(), { throwOnError: false });
                 if (!playResult.ok) {
+                    // Destroy broken player so retry can create a fresh one
+                    try { await safeDestroyPlayer(guildId, player); } catch (e) {
+                        cleanupPlayerState(guildId);
+                        kazagumo.players.delete(guildId);
+                    }
                     throw new Error(`Playback resume skipped (${playResult.reason})`);
                 }
 
