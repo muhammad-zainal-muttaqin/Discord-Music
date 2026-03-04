@@ -245,6 +245,17 @@ logging:
 - **Solution 3:** Try different clients: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
 - Check Lavalink logs for detailed errors
 
+### Lavalink 4.2.x `Bad Request`: `channelId` is required
+- Symptom in Lavalink logs: `Field 'channelId' is required ... missing at path: $.voice`
+- Cause: player voice update payload is missing `voice.channelId`
+- This repository patches Shoukaku `sendServerUpdate` in [`index.js`](index.js) to include `channelId`
+- If you maintain a custom fork/client, ensure voice payload includes:
+- `voice.token`
+- `voice.endpoint`
+- `voice.sessionId`
+- `voice.channelId`
+- After applying fixes, restart both Lavalink and the bot process
+
 ### Commands don't appear
 - Wait a few minutes, Discord caches slash commands
 - Make sure the bot has `applications.commands` permission
