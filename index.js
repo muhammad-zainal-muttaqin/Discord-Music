@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, Events, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
-const { Shoukaku, Connectors } = require('shoukaku');
+const { Shoukaku, Connectors, Player } = require('shoukaku');
 const { Kazagumo, Plugins } = require('kazagumo');
 const http = require('node:http');
 require('dotenv').config();
@@ -109,6 +109,31 @@ if (shoukakuConnector?.raw) {
         return originalConnectorRaw(packet);
     };
 }
+
+// Patch Shoukaku voice server update to normalize endpoint and retry once on 400.
+const originalSendServerUpdate = Player.prototype.sendServerUpdate;
+Player.prototype.sendServerUpdate = async function (connection) {
+    if (connection?.serverUpdate?.endpoint) {
+        connection.serverUpdate.endpoint = normalizeVoiceEndpoint(connection.serverUpdate.endpoint);
+    }
+
+    try {
+        return await originalSendServerUpdate.call(this, connection);
+    } catch (error) {
+        if (!isPlayerUpdateBadRequest(error)) throw error;
+
+        const endpoint = connection?.serverUpdate?.endpoint ?? 'missing';
+        const hasSession = Boolean(connection?.sessionId);
+        const hasToken = Boolean(connection?.serverUpdate?.token);
+        console.warn(
+            `[Voice] sendServerUpdate 400 guild=${this.guildId} channel=${connection?.channelId ?? 'none'} ` +
+            `session=${hasSession ? 'ok' : 'missing'} endpoint=${endpoint} token=${hasToken ? 'ok' : 'missing'}; retrying once...`
+        );
+
+        await new Promise(resolve => setTimeout(resolve, 700));
+        return originalSendServerUpdate.call(this, connection);
+    }
+};
 
 // Kazagumo Events
 kazagumo.shoukaku.on('error', (name, error) => {
