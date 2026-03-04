@@ -110,28 +110,51 @@ if (shoukakuConnector?.raw) {
     };
 }
 
-// Patch Shoukaku voice server update to normalize endpoint and retry once on 400.
-const originalSendServerUpdate = Player.prototype.sendServerUpdate;
+// Patch Shoukaku voice server update:
+// Lavalink v4.2.x requires voice.channelId in update player payload.
 Player.prototype.sendServerUpdate = async function (connection) {
-    if (connection?.serverUpdate?.endpoint) {
-        connection.serverUpdate.endpoint = normalizeVoiceEndpoint(connection.serverUpdate.endpoint);
+    const conn = connection || this.node?.manager?.connections?.get?.(this.guildId);
+    const endpoint = normalizeVoiceEndpoint(conn?.serverUpdate?.endpoint ?? null);
+    const channelId = conn?.channelId ?? conn?.lastChannelId ?? null;
+    const token = conn?.serverUpdate?.token ?? null;
+    const sessionId = conn?.sessionId ?? null;
+
+    const voicePayload = {
+        token,
+        endpoint,
+        sessionId,
+        channelId
+    };
+
+    const missing = Object.entries(voicePayload)
+        .filter(([, value]) => !value)
+        .map(([key]) => key);
+
+    if (missing.length > 0) {
+        throw new Error(
+            `[Voice] Incomplete voice state for guild ${this.guildId}. Missing: ${missing.join(', ')}`
+        );
     }
 
+    const playerUpdate = {
+        guildId: this.guildId,
+        playerOptions: {
+            voice: voicePayload
+        }
+    };
+
     try {
-        return await originalSendServerUpdate.call(this, connection);
+        return await this.node.rest.updatePlayer(playerUpdate);
     } catch (error) {
         if (!isPlayerUpdateBadRequest(error)) throw error;
 
-        const endpoint = connection?.serverUpdate?.endpoint ?? 'missing';
-        const hasSession = Boolean(connection?.sessionId);
-        const hasToken = Boolean(connection?.serverUpdate?.token);
         console.warn(
-            `[Voice] sendServerUpdate 400 guild=${this.guildId} channel=${connection?.channelId ?? 'none'} ` +
-            `session=${hasSession ? 'ok' : 'missing'} endpoint=${endpoint} token=${hasToken ? 'ok' : 'missing'}; retrying once...`
+            `[Voice] sendServerUpdate 400 guild=${this.guildId} channel=${channelId} ` +
+            `session=ok endpoint=${endpoint} token=ok; retrying once...`
         );
 
         await new Promise(resolve => setTimeout(resolve, 700));
-        return originalSendServerUpdate.call(this, connection);
+        return this.node.rest.updatePlayer(playerUpdate);
     }
 };
 
