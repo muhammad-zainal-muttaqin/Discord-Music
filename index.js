@@ -92,6 +92,24 @@ const kazagumo = new Kazagumo({
     resumeByLibrary: false,
 });
 
+// Normalize VOICE_SERVER_UPDATE endpoint format before Shoukaku processes it.
+// This helps avoid Lavalink 400s if endpoint includes protocol prefixes.
+const shoukakuConnector = kazagumo.shoukaku.connector;
+if (shoukakuConnector?.raw) {
+    const originalConnectorRaw = shoukakuConnector.raw.bind(shoukakuConnector);
+    shoukakuConnector.raw = (packet) => {
+        if (packet?.t === 'VOICE_SERVER_UPDATE' && packet?.d && typeof packet.d.endpoint === 'string') {
+            const original = packet.d.endpoint;
+            const normalized = normalizeVoiceEndpoint(original);
+            if (normalized !== original) {
+                console.log(`[Voice] Normalized endpoint for guild ${packet.d.guild_id}: ${original} -> ${normalized}`);
+                packet.d.endpoint = normalized;
+            }
+        }
+        return originalConnectorRaw(packet);
+    };
+}
+
 // Kazagumo Events
 kazagumo.shoukaku.on('error', (name, error) => {
     console.error(`❌ Lavalink Node "${name}" error:`, error);
@@ -180,6 +198,15 @@ function isNodeOperational() {
     return typeof sessionId === 'string' && sessionId.length > 0 && sessionId !== 'null';
 }
 
+function normalizeVoiceEndpoint(endpoint) {
+    if (typeof endpoint !== 'string') return endpoint;
+    return endpoint
+        .trim()
+        .replace(/^wss?:\/\//i, '')
+        .replace(/^https?:\/\//i, '')
+        .replace(/\/+$/, '');
+}
+
 function isPlayerUpdateBadRequest(error) {
     if (!error) return false;
     const path = String(error.path || '').toLowerCase();
@@ -224,14 +251,25 @@ async function createPlayerWithRecovery(options, context = 'Player') {
         } catch (error) {
             lastError = error;
             const message = String(error?.message || '').toLowerCase();
+            const badPlayerRequest = isPlayerUpdateBadRequest(error);
             const recoverable =
                 isSessionError(error) ||
-                isPlayerUpdateBadRequest(error) ||
                 message.includes('missing session id') ||
                 message.includes('missing connection endpoint') ||
                 message.includes('voice connection is not established');
 
-            if (!recoverable || attempt === maxAttempts) {
+            const connection = kazagumo.shoukaku.connections.get(options.guildId);
+            const endpoint = connection?.serverUpdate?.endpoint ?? null;
+            const token = connection?.serverUpdate?.token ?? null;
+            const sessionId = connection?.sessionId ?? null;
+            console.warn(
+                `[${context}] createPlayer diagnostics guild=${options.guildId} channel=${connection?.channelId ?? 'none'} ` +
+                `session=${sessionId ? 'ok' : 'missing'} endpoint=${endpoint || 'missing'} token=${token ? 'ok' : 'missing'}`
+            );
+
+            // Lavalink 400 for player voice update is usually non-transient.
+            // Retrying would only cause repeated join/disconnect loops.
+            if (badPlayerRequest || !recoverable || attempt === maxAttempts) {
                 throw error;
             }
 
