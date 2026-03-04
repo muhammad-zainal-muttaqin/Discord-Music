@@ -180,6 +180,70 @@ function isNodeOperational() {
     return typeof sessionId === 'string' && sessionId.length > 0 && sessionId !== 'null';
 }
 
+function isPlayerUpdateBadRequest(error) {
+    if (!error) return false;
+    const path = String(error.path || '').toLowerCase();
+    return error.status === 400 && path.includes('/players/');
+}
+
+function hardCleanupGuildVoiceState(guildId, options = {}) {
+    const { disconnectVoice = false } = options;
+
+    const connection = kazagumo.shoukaku.connections.get(guildId);
+    if (connection) {
+        if (disconnectVoice) {
+            try {
+                connection.disconnect();
+            } catch {
+                // Ignore disconnect errors during forced cleanup
+            }
+        }
+        kazagumo.shoukaku.connections.delete(guildId);
+    }
+
+    const shoukakuPlayer = kazagumo.shoukaku.players.get(guildId);
+    if (shoukakuPlayer) {
+        try {
+            if (typeof shoukakuPlayer.clean === 'function') shoukakuPlayer.clean();
+        } catch {
+            // Ignore cleanup errors for stale players
+        }
+        kazagumo.shoukaku.players.delete(guildId);
+    }
+
+    kazagumo.players.delete(guildId);
+}
+
+async function createPlayerWithRecovery(options, context = 'Player') {
+    const maxAttempts = 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await kazagumo.createPlayer(options);
+        } catch (error) {
+            lastError = error;
+            const message = String(error?.message || '').toLowerCase();
+            const recoverable =
+                isSessionError(error) ||
+                isPlayerUpdateBadRequest(error) ||
+                message.includes('missing session id') ||
+                message.includes('missing connection endpoint') ||
+                message.includes('voice connection is not established');
+
+            if (!recoverable || attempt === maxAttempts) {
+                throw error;
+            }
+
+            console.warn(`[${context}] createPlayer attempt ${attempt} failed (${error.message || error}). Resetting voice state and retrying...`);
+            hardCleanupGuildVoiceState(options.guildId, { disconnectVoice: true });
+            await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+        }
+    }
+
+    throw lastError;
+}
+
 async function safePlayerAction(player, actionName, fn, options = {}) {
     const { throwOnError = true } = options;
     const guildId = player?.guildId;
@@ -196,11 +260,17 @@ async function safePlayerAction(player, actionName, fn, options = {}) {
         return { ok: true, value };
     } catch (error) {
         if (isSessionError(error)) {
-            if (guildId) cleanupPlayerState(guildId);
+            if (guildId) {
+                cleanupPlayerState(guildId);
+                hardCleanupGuildVoiceState(guildId);
+            }
             return { ok: false, reason: 'session-expired', error };
         }
         if (isAlreadyDestroyedError(error)) {
-            if (guildId) cleanupPlayerState(guildId);
+            if (guildId) {
+                cleanupPlayerState(guildId);
+                hardCleanupGuildVoiceState(guildId);
+            }
             return { ok: false, reason: 'already-destroyed', error };
         }
 
@@ -215,27 +285,30 @@ async function safeDestroyPlayer(guildId, player) {
 
     const currentPlayer = kazagumo.players.get(guildId);
     if (currentPlayer && currentPlayer !== player) {
+        hardCleanupGuildVoiceState(guildId);
         cleanupPlayerState(guildId);
         return { ok: false, reason: 'stale-player' };
     }
 
     if (!isNodeOperational()) {
-        kazagumo.players.delete(guildId);
+        hardCleanupGuildVoiceState(guildId, { disconnectVoice: true });
         cleanupPlayerState(guildId);
         return { ok: false, reason: 'node-not-ready' };
     }
 
     try {
         await player.destroy();
+        hardCleanupGuildVoiceState(guildId);
         cleanupPlayerState(guildId);
         return { ok: true };
     } catch (error) {
         if (isSessionError(error) || isAlreadyDestroyedError(error)) {
-            kazagumo.players.delete(guildId);
+            hardCleanupGuildVoiceState(guildId, { disconnectVoice: true });
             cleanupPlayerState(guildId);
             return { ok: false, reason: isSessionError(error) ? 'session-expired' : 'already-destroyed', error };
         }
         console.error(`[Player] Failed destroy in guild ${guildId}:`, error.message || error);
+        hardCleanupGuildVoiceState(guildId);
         cleanupPlayerState(guildId);
         return { ok: false, reason: 'error', error };
     }
@@ -338,7 +411,7 @@ async function rejoinVoiceChannels(gen) {
                     await safeDestroyPlayer(guildId, existingPlayer);
                 } catch (e) {
                     cleanupPlayerState(guildId);
-                    kazagumo.players.delete(guildId);
+                    hardCleanupGuildVoiceState(guildId);
                 }
             }
 
@@ -346,37 +419,13 @@ async function rejoinVoiceChannels(gen) {
 
             console.log(`[Resume] Creating new player for ${guild.name}...`);
 
-            // Create fresh player with retry logic
-            let player;
-            let playerCreated = false;
-            let createAttempts = 0;
-            const maxCreateAttempts = 3;
-
-            while (!playerCreated && createAttempts < maxCreateAttempts) {
-                if (isCancelled()) return;
-                createAttempts++;
-                try {
-                    player = await kazagumo.createPlayer({
-                        guildId: guildId,
-                        textId: state.textId,
-                        voiceId: state.voiceId,
-                        volume: state.volume || 30,
-                        deaf: true
-                    });
-                    playerCreated = true;
-                } catch (createError) {
-                    console.error(`[Resume] Player creation attempt ${createAttempts} failed: ${createError.message}`);
-                    if (createAttempts < maxCreateAttempts) {
-                        await new Promise(r => setTimeout(r, 2000));
-                    } else {
-                        throw createError;
-                    }
-                }
-            }
-
-            if (!playerCreated || !player) {
-                throw new Error('Failed to create player after multiple attempts');
-            }
+            const player = await createPlayerWithRecovery({
+                guildId: guildId,
+                textId: state.textId,
+                voiceId: state.voiceId,
+                volume: state.volume || 30,
+                deaf: true
+            }, 'Resume');
 
             if (isCancelled()) return;
 
@@ -397,7 +446,7 @@ async function rejoinVoiceChannels(gen) {
                     // Destroy broken player so retry can create a fresh one
                     try { await safeDestroyPlayer(guildId, player); } catch (e) {
                         cleanupPlayerState(guildId);
-                        kazagumo.players.delete(guildId);
+                        hardCleanupGuildVoiceState(guildId);
                     }
                     throw new Error(`Playback resume skipped (${playResult.reason})`);
                 }
@@ -511,15 +560,19 @@ async function attemptReconnect() {
         }
 
         // Also destroy any existing players since they're definitely broken
-        if (kazagumo.players.size > 0) {
-            console.log(`🗑️ [Reconnect] Cleaning up ${kazagumo.players.size} stale player(s)`);
-            for (const [guildId] of kazagumo.players) {
+        const staleGuildIds = new Set([
+            ...kazagumo.players.keys(),
+            ...kazagumo.shoukaku.players.keys(),
+            ...kazagumo.shoukaku.connections.keys()
+        ]);
+        if (staleGuildIds.size > 0) {
+            console.log(`🗑️ [Reconnect] Cleaning up ${staleGuildIds.size} stale guild voice state(s)`);
+            for (const guildId of staleGuildIds) {
                 try {
                     cleanupPlayerState(guildId);
-                    // Just delete from map, don't call Lavalink API
-                    kazagumo.players.delete(guildId);
-                } catch (e) {
-                    // Ignore
+                    hardCleanupGuildVoiceState(guildId, { disconnectVoice: true });
+                } catch {
+                    // Ignore cleanup failures during reconnect
                 }
             }
         }
@@ -1216,15 +1269,21 @@ client.on(Events.InteractionCreate, async interaction => {
                     return;
                 }
 
+                if (player && (!kazagumo.shoukaku.players.has(guild.id) || !kazagumo.shoukaku.connections.has(guild.id))) {
+                    console.warn(`[Play] Detected stale player cache for guild ${guild.id}, resetting voice state.`);
+                    hardCleanupGuildVoiceState(guild.id, { disconnectVoice: true });
+                    player = null;
+                }
+
                 // Create player if doesn't exist
                 if (!player) {
-                    player = await kazagumo.createPlayer({
+                    player = await createPlayerWithRecovery({
                         guildId: guild.id,
                         textId: channel.id,
                         voiceId: voiceChannel.id,
                         volume: 30,
                         deaf: true
-                    });
+                    }, 'Play');
                 }
 
                 // Search for tracks
@@ -1519,15 +1578,21 @@ client.on(Events.InteractionCreate, async interaction => {
             }
 
             try {
+                if (player && (!kazagumo.shoukaku.players.has(guild.id) || !kazagumo.shoukaku.connections.has(guild.id))) {
+                    console.warn(`[Join] Detected stale player cache for guild ${guild.id}, resetting voice state.`);
+                    hardCleanupGuildVoiceState(guild.id, { disconnectVoice: true });
+                    player = null;
+                }
+
                 // Create player if doesn't exist
                 if (!player) {
-                    player = await kazagumo.createPlayer({
+                    player = await createPlayerWithRecovery({
                         guildId: guild.id,
                         textId: channel.id,
                         voiceId: voiceChannel.id,
                         volume: 30,
                         deaf: true
-                    });
+                    }, 'Join');
                 }
 
                 await sendAutoDeleteReply(interaction,
