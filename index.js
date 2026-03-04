@@ -115,6 +115,12 @@ let intentionalClose = false;
 let reconnectBackoff = 3000;     // Start at 3s, doubles each failure up to MAX
 const MAX_RECONNECT_BACKOFF = 30000; // Cap at 30s
 
+// Generation counter and timeout handles for cancellable resume/reconnect
+let resumeGeneration = 0;
+let pendingResumeTimeout = null;
+let pendingResumeRetryTimeout = null;
+let pendingReconnectTimeout = null;
+
 // Store voice channel states and QUEUE for rejoin after reconnect
 const savedVoiceStates = new Map(); // guildId -> { voiceId, textId, current, queue, position }
 
@@ -151,7 +157,9 @@ function getMainNode() {
 
 function getNodeSessionId(node) {
     if (!node) return null;
-    return node.sessionId ?? node.sessionID ?? node.session?.id ?? null;
+    if (node.sessionId !== undefined) return node.sessionId;
+    if (node.sessionID !== undefined) return node.sessionID;
+    return node.session?.id ?? null;
 }
 
 function isNodeStateConnected(node) {
@@ -168,12 +176,8 @@ function isNodeStateConnecting(node) {
 function isNodeOperational() {
     const node = getMainNode();
     if (!node || !isNodeStateConnected(node)) return false;
-
     const sessionId = getNodeSessionId(node);
-    if (sessionId == null) return true;
-    if (typeof sessionId === 'string') return sessionId !== 'null';
-
-    return true;
+    return typeof sessionId === 'string' && sessionId.length > 0 && sessionId !== 'null';
 }
 
 async function safePlayerAction(player, actionName, fn, options = {}) {
@@ -241,9 +245,20 @@ async function safeDestroyPlayer(guildId, player) {
 function saveVoiceStates() {
     kazagumo.players.forEach((player, guildId) => {
         if (player.voiceId) {
-            // Only save if there's actually music in queue or playing
             const current = player.queue.current;
             const queue = [...player.queue]; // Extract all tracks from queue
+
+            // Skip players with no current track and empty queue (likely from interrupted resume)
+            if (!current && queue.length === 0) {
+                console.log(`[Save] Skipping guild ${guildId}: no current track and empty queue (likely interrupted resume)`);
+                return;
+            }
+
+            // If we already have saved data for this guild, don't overwrite with potentially worse data
+            if (savedVoiceStates.has(guildId)) {
+                console.log(`[Save] Keeping existing saved state for guild ${guildId} (not overwriting)`);
+                return;
+            }
 
             const guild = client.guilds.cache.get(guildId);
             savedVoiceStates.set(guildId, {
@@ -264,7 +279,14 @@ function saveVoiceStates() {
 let resumeRetryCount = 0;
 const MAX_RESUME_RETRIES = 3;
 
-async function rejoinVoiceChannels() {
+async function rejoinVoiceChannels(gen) {
+    const isCancelled = () => gen !== resumeGeneration;
+
+    if (isCancelled()) {
+        console.log(`[Resume] Cancelled (generation ${gen} superseded by ${resumeGeneration})`);
+        return;
+    }
+
     if (savedVoiceStates.size === 0) {
         resumeRetryCount = 0;
         return;
@@ -275,14 +297,19 @@ async function rejoinVoiceChannels() {
         console.log(`⏳ [Resume] Node not ready yet, waiting...`);
         if (resumeRetryCount < MAX_RESUME_RETRIES) {
             resumeRetryCount++;
-            setTimeout(rejoinVoiceChannels, 3000);
+            pendingResumeRetryTimeout = setTimeout(() => rejoinVoiceChannels(gen), 3000);
             return;
         }
     }
 
-    console.log(`🔄 [Resume] Attempt ${resumeRetryCount + 1}/${MAX_RESUME_RETRIES} for ${savedVoiceStates.size} channel(s)...`);
+    console.log(`🔄 [Resume] Attempt ${resumeRetryCount + 1}/${MAX_RESUME_RETRIES} for ${savedVoiceStates.size} channel(s)... (gen=${gen})`);
 
     for (const [guildId, state] of savedVoiceStates) {
+        if (isCancelled()) {
+            console.log(`[Resume] Cancelled mid-loop (generation ${gen} superseded by ${resumeGeneration})`);
+            return;
+        }
+
         try {
             if (!isNodeOperational()) {
                 console.log('[Resume] Node became unavailable during resume pass, retrying later...');
@@ -315,6 +342,8 @@ async function rejoinVoiceChannels() {
                 }
             }
 
+            if (isCancelled()) return;
+
             console.log(`[Resume] Creating new player for ${guild.name}...`);
 
             // Create fresh player with retry logic
@@ -324,6 +353,7 @@ async function rejoinVoiceChannels() {
             const maxCreateAttempts = 3;
 
             while (!playerCreated && createAttempts < maxCreateAttempts) {
+                if (isCancelled()) return;
                 createAttempts++;
                 try {
                     player = await kazagumo.createPlayer({
@@ -347,6 +377,8 @@ async function rejoinVoiceChannels() {
             if (!playerCreated || !player) {
                 throw new Error('Failed to create player after multiple attempts');
             }
+
+            if (isCancelled()) return;
 
             console.log(`[Resume] Player created for ${guild.name}, restoring queue...`);
 
@@ -410,12 +442,14 @@ async function rejoinVoiceChannels() {
         }
     }
 
+    if (isCancelled()) return;
+
     // If there are still guilds left in saved states (failed ones), retry
     if (savedVoiceStates.size > 0) {
         resumeRetryCount++;
         if (resumeRetryCount < MAX_RESUME_RETRIES) {
             console.log(`🔄 [Resume] Retrying failed guilds in 5s... (${resumeRetryCount}/${MAX_RESUME_RETRIES})`);
-            setTimeout(rejoinVoiceChannels, 5000);
+            pendingResumeRetryTimeout = setTimeout(() => rejoinVoiceChannels(gen), 5000);
         } else {
             console.log(`❌ [Resume] Giving up after ${MAX_RESUME_RETRIES} attempts. Failed guilds: ${Array.from(savedVoiceStates.keys()).join(', ')}`);
             savedVoiceStates.clear();
@@ -522,19 +556,39 @@ kazagumo.shoukaku.on('ready', (name) => {
     isStartingUp = false;               // Startup window is over
     reconnectBackoff = 3000; // Reset backoff on successful connection
 
+    // Clear pending reconnect timeout since we're now connected
+    if (pendingReconnectTimeout) {
+        clearTimeout(pendingReconnectTimeout);
+        pendingReconnectTimeout = null;
+    }
+
     // Always reset reconnect attempts on successful connection
     if (reconnectAttempts > 0) {
         console.log(`✅ [Reconnect] Success after ${reconnectAttempts} attempts.`);
         reconnectAttempts = 0;
     }
 
+    // Cancel any stale in-flight resumes and capture current generation
+    if (pendingResumeTimeout) {
+        clearTimeout(pendingResumeTimeout);
+        pendingResumeTimeout = null;
+    }
+    if (pendingResumeRetryTimeout) {
+        clearTimeout(pendingResumeRetryTimeout);
+        pendingResumeRetryTimeout = null;
+    }
+    const gen = resumeGeneration; // Capture current generation for this ready cycle
+
     // Wait for node to be fully ready before resuming
-    setTimeout(() => {
+    pendingResumeTimeout = setTimeout(() => {
+        pendingResumeTimeout = null;
+        if (gen !== resumeGeneration) return; // Stale ready cycle
         if (savedVoiceStates.size === 0) {
             return;
         }
         if (isNodeOperational()) {
-            rejoinVoiceChannels();
+            resumeRetryCount = 0;
+            rejoinVoiceChannels(gen);
         } else {
             console.log(`[Reconnect] Node not ready for resume, skipping...`);
         }
@@ -552,6 +606,20 @@ kazagumo.shoukaku.on('close', (name, code, reason) => {
 
     isReconnecting = true;
 
+    // Increment generation to invalidate all in-flight resumes
+    resumeGeneration++;
+    console.log(`[Reconnect] Resume generation incremented to ${resumeGeneration}`);
+
+    // Cancel any pending resume/retry timeouts from previous ready cycle
+    if (pendingResumeTimeout) {
+        clearTimeout(pendingResumeTimeout);
+        pendingResumeTimeout = null;
+    }
+    if (pendingResumeRetryTimeout) {
+        clearTimeout(pendingResumeRetryTimeout);
+        pendingResumeRetryTimeout = null;
+    }
+
     // Stop all player intervals IMMEDIATELY to prevent session/null REST errors
     for (const [guildId] of kazagumo.players) {
         clearPlayerInterval(guildId);
@@ -560,9 +628,18 @@ kazagumo.shoukaku.on('close', (name, code, reason) => {
     // Save states immediately when connection closes
     saveVoiceStates();
 
+    // Cancel previous reconnect timeout before scheduling a new one
+    if (pendingReconnectTimeout) {
+        clearTimeout(pendingReconnectTimeout);
+        pendingReconnectTimeout = null;
+    }
+
     // Trigger reconnect with exponential backoff
     console.log(`🔄 [Reconnect] Will attempt reconnect in ${reconnectBackoff / 1000}s...`);
-    setTimeout(attemptReconnect, reconnectBackoff);
+    pendingReconnectTimeout = setTimeout(() => {
+        pendingReconnectTimeout = null;
+        attemptReconnect();
+    }, reconnectBackoff);
 
     // Double the backoff for next time (capped at max)
     reconnectBackoff = Math.min(reconnectBackoff * 2, MAX_RECONNECT_BACKOFF);
