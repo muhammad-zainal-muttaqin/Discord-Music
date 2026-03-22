@@ -6,6 +6,7 @@ const { buildPlayerComponents, buildPlayerEmbed } = require('../ui/playerView');
 const { normalizeVoiceEndpoint, wait } = require('../utils');
 const {
     isAlreadyDestroyedError,
+    isLoginRequiredPlaybackError,
     isPlayerUpdateBadRequest,
     isSessionError,
     toErrorMessage
@@ -53,6 +54,7 @@ class MusicRuntime {
 
         this.guildStates = new Map();
         this.snapshots = new Map();
+        this.searchFallbacks = new Map();
         this.playerMessages = new Map();
         this.playerIntervals = new Map();
         this.emptyQueueNotifiedAt = new Map();
@@ -121,6 +123,20 @@ class MusicRuntime {
     bindNodeEvents() {
         this.kazagumo.shoukaku.on('error', (name, error) => {
             console.error(`Lavalink node "${name}" error:`, error);
+
+            const message = String(error?.message || '');
+            const configuredHost = this.config.lavalink.url || 'localhost:2333';
+            const configuredSecure = this.config.lavalink.secure === true;
+
+            if (message.includes('401')) {
+                console.error(
+                    `[Lavalink] Authentication failed. Check that bot LAVALINK_PASSWORD matches Lavalink LAVALINK_SERVER_PASSWORD exactly. Current bot config: host=${configuredHost}, secure=${configuredSecure}`
+                );
+            } else if (message.includes('502')) {
+                console.error(
+                    `[Lavalink] Gateway error while connecting. On Railway this usually means Lavalink is still starting or LAVALINK_HOST/LAVALINK_SECURE points to the wrong endpoint. Current bot config: host=${configuredHost}, secure=${configuredSecure}`
+                );
+            }
         });
 
         this.kazagumo.shoukaku.on('disconnect', (name, players, moved) => {
@@ -254,6 +270,58 @@ class MusicRuntime {
                         new EmbedBuilder()
                             .setColor(0xFF0000)
                             .setDescription(`❌ An error occurred: ${toErrorMessage(error)}`)
+                    ]
+                }).catch(() => { });
+            }
+        });
+
+        this.kazagumo.on('playerException', async (player, data) => {
+            const exceptionMessage = data?.exception?.message || 'Unknown playback exception';
+            const currentTrack = player?.queue?.current;
+
+            console.error(`Player exception in guild ${player.guildId}:`, exceptionMessage);
+
+            if (currentTrack && isLoginRequiredPlaybackError(exceptionMessage)) {
+                const fallback = this.consumeSearchFallback(currentTrack);
+                if (fallback?.nextTrack) {
+                    console.warn(
+                        `[PlayFallback] Current YouTube result is login-blocked in guild ${player.guildId}. Retrying with another search result for "${fallback.query}". Remaining fallbacks: ${fallback.remainingCount}`
+                    );
+
+                    const playResult = await this.safePlayerAction(
+                        player,
+                        'play-fallback',
+                        () => player.play(fallback.nextTrack, { replaceCurrent: true }),
+                        { throwOnError: false }
+                    );
+
+                    if (playResult.ok) {
+                        const channel = this.client.channels.cache.get(player.textId);
+                        if (channel) {
+                            channel.send({
+                                embeds: [
+                                    new EmbedBuilder()
+                                        .setColor(0xF1C40F)
+                                        .setDescription('⚠️ The first YouTube result was blocked by login requirements. Trying another search result...')
+                                ]
+                            }).catch(() => { });
+                        }
+                        return;
+                    }
+                }
+            }
+
+            const channel = this.client.channels.cache.get(player.textId);
+            if (channel) {
+                const description = isLoginRequiredPlaybackError(exceptionMessage)
+                    ? '❌ YouTube blocked this video and requires login. Try another result or another query.'
+                    : `❌ Playback failed: ${exceptionMessage}`;
+
+                channel.send({
+                    embeds: [
+                        new EmbedBuilder()
+                            .setColor(0xFF0000)
+                            .setDescription(description)
                     ]
                 }).catch(() => { });
             }
@@ -484,6 +552,45 @@ class MusicRuntime {
         }
         state.resumeAttempts = 0;
         this.snapshots.delete(guildId);
+    }
+
+    getTrackFallbackKey(track) {
+        if (!track) return null;
+        return track.track || `${track.identifier || ''}:${track.title || ''}`;
+    }
+
+    registerSearchFallbacks(primaryTrack, alternativeTracks, query) {
+        const key = this.getTrackFallbackKey(primaryTrack);
+        if (!key || !Array.isArray(alternativeTracks) || alternativeTracks.length === 0) return;
+
+        this.searchFallbacks.set(key, {
+            query,
+            remainingTracks: [...alternativeTracks]
+        });
+    }
+
+    consumeSearchFallback(track) {
+        const key = this.getTrackFallbackKey(track);
+        if (!key) return null;
+
+        const fallbackState = this.searchFallbacks.get(key);
+        this.searchFallbacks.delete(key);
+
+        if (!fallbackState || fallbackState.remainingTracks.length === 0) {
+            return null;
+        }
+
+        const [nextTrack, ...remainingTracks] = fallbackState.remainingTracks;
+
+        if (nextTrack && remainingTracks.length > 0) {
+            this.registerSearchFallbacks(nextTrack, remainingTracks, fallbackState.query);
+        }
+
+        return {
+            nextTrack,
+            query: fallbackState.query,
+            remainingCount: remainingTracks.length
+        };
     }
 
     scheduleGuildResume(guildId, version, delayMs) {

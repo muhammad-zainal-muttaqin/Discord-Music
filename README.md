@@ -103,12 +103,12 @@ Requested by: Username
 
 ```
 DISCORD_TOKEN=your_discord_bot_token
-LAVALINK_HOST=lavalink.railway.internal:2333
+LAVALINK_HOST=lavalink.railway.internal:8080
 LAVALINK_PASSWORD=mysecretpassword
 LAVALINK_SECURE=false
 ```
 
-> **Note**: Replace `lavalink.railway.internal` with the internal hostname of your Lavalink service.
+> **Note**: Replace `lavalink.railway.internal` with the internal hostname of your Lavalink service, and use the actual internal port shown in Lavalink startup logs. On Railway this is commonly `8080`.
 
 5. Deploy!
 
@@ -119,17 +119,28 @@ To fix "This video requires login" or "Please sign in" errors, add these environ
 **Required for YouTube playback:**
 ```
 PLUGINS_YOUTUBE_ENABLED=true
+PLUGINS_YOUTUBE_ALLOWSEARCH=true
+PLUGINS_YOUTUBE_ALLOWDIRECTVIDEOIDS=true
+PLUGINS_YOUTUBE_ALLOWDIRECTPLAYLISTIDS=true
 PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
 PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
-PLUGINS_YOUTUBE_CLIENTS_0=WEB
-PLUGINS_YOUTUBE_CLIENTS_1=MWEB
-PLUGINS_YOUTUBE_CLIENTS_2=TVHTML5EMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_0=MWEB
+PLUGINS_YOUTUBE_CLIENTS_1=WEB
+PLUGINS_YOUTUBE_CLIENTS_2=WEBEMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
 ```
 
 **Optional but recommended - OAuth setup:**
 ```
 PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+# Add after the first successful device login:
+# PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...
+# Optional: if Lavalink warns that OAuth is enabled without any OAuth-compatible clients,
+# add TV as a last-resort fallback client:
+# PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
+
+Use raw values in your hosting panel unless it explicitly requires quotes. Avoid `TV` as a default client because playback requires sign-in, and avoid `MUSIC` for normal playback because it is mainly useful for `ytmsearch`.
 
 When you first enable OAuth without a refresh token:
 1. Check Lavalink logs for a device code (like `XXX-XXX-XXX`)
@@ -212,12 +223,12 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.5.0"
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
       snapshot: false
   server:
     password: "youshallnotpass"
     sources:
-      youtube: true
+      youtube: false
       bandcamp: true
       soundcloud: true
       twitch: true
@@ -225,10 +236,28 @@ lavalink:
       http: true
       local: false
 
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - MWEB
+      - WEB
+      - WEBEMBEDDED
+      - ANDROID_VR
+    oauth:
+      enabled: true
+      # refreshToken: "paste your refresh token here"
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
+
 logging:
   level:
     root: INFO
     lavalink: INFO
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
 ```
 
 ## 🔧 Troubleshooting
@@ -237,12 +266,16 @@ logging:
 - Make sure the Lavalink server is running
 - Check that `LAVALINK_HOST` and `LAVALINK_PASSWORD` are correct
 - On Railway, use the **internal URL**, not the public URL
+- If Lavalink logs show `Authentication failed`, your bot `LAVALINK_PASSWORD` does not match Lavalink `LAVALINK_SERVER_PASSWORD`
 
 ### Songs won't play / "Please sign in" error
 - This is a common issue with YouTube blocking automated access
 - **Solution 1:** Enable remote cipher: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
 - **Solution 2:** Setup OAuth with a burner Google account (see Step 3 above)
-- **Solution 3:** Try different clients: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
+- **Solution 3:** Use playback-oriented clients: `MWEB`, `WEB`, `WEBEMBEDDED`, `ANDROID_VR`
+- Avoid `TV` as your default client because it requires sign-in for playback
+- If you keep OAuth enabled and Lavalink warns that no OAuth-compatible clients are registered, add `TV` as the last client only
+- Avoid `MUSIC` for normal playback because it is mainly useful for `ytmsearch`
 - Check Lavalink logs for detailed errors
 
 ### Lavalink 4.2.x `Bad Request`: `channelId` is required
@@ -274,7 +307,7 @@ logging:
 - The `isStartingUp` flag is only cleared when `ready` fires. If `ready` never fires (e.g., Lavalink not reachable), the flag stays `true`. Check that `LAVALINK_HOST`, `LAVALINK_PASSWORD`, and `LAVALINK_SECURE` are correct.
 
 ### Railway: using public URL vs internal URL
-- **Internal URL** (`*.railway.internal`): use port `2333`, set `LAVALINK_SECURE=false`
+- **Internal URL** (`*.railway.internal`): use the actual internal port from Lavalink startup logs, commonly `8080`, and set `LAVALINK_SECURE=false`
 - **Public URL** (`*.up.railway.app`): use port `443`, set `LAVALINK_SECURE=true`
 
 ### Player panel not updating
@@ -294,7 +327,7 @@ logging:
 > **Note for maintainers:** If you upgrade Shoukaku, always verify the `State` enum values in `node_modules/shoukaku/src/Constants.ts`. The state numbers differ between versions. Current values (Shoukaku 4.x): `CONNECTING=0`, `CONNECTED=1`, `DISCONNECTING=2`, `DISCONNECTED=3`.
 
 ### v2.1 - YouTube OAuth & Remote Cipher (December 2025)
-- 🔐 OAuth support for YouTube authentication (bypasses "Please sign in" errors)
+- 🔐 OAuth support for YouTube authentication (reduces some "Please sign in" errors, but is not a guaranteed bypass)
 - 🔧 Remote cipher server integration (fixes signature extraction issues)
 - 📝 Updated documentation with detailed setup instructions
 - 🎵 More reliable YouTube playback

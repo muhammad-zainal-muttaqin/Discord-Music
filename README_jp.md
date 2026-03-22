@@ -103,12 +103,12 @@ Requested by: Username
 
 ```
 DISCORD_TOKEN=your_discord_bot_token
-LAVALINK_HOST=lavalink.railway.internal:2333
+LAVALINK_HOST=lavalink.railway.internal:8080
 LAVALINK_PASSWORD=mysecretpassword
 LAVALINK_SECURE=false
 ```
 
-> **注**: `lavalink.railway.internal`をLavalinkサービスの内部ホスト名に置き換えてください。
+> **注**: `lavalink.railway.internal`をLavalinkサービスの内部ホスト名に置き換え、Lavalink起動ログに表示される実際の内部ポートを使用してください。Railwayでは `8080` になることが多いです。
 
 5. デプロイ！
 
@@ -119,17 +119,28 @@ LAVALINK_SECURE=false
 **YouTube再生に必須:**
 ```
 PLUGINS_YOUTUBE_ENABLED=true
+PLUGINS_YOUTUBE_ALLOWSEARCH=true
+PLUGINS_YOUTUBE_ALLOWDIRECTVIDEOIDS=true
+PLUGINS_YOUTUBE_ALLOWDIRECTPLAYLISTIDS=true
 PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
 PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
-PLUGINS_YOUTUBE_CLIENTS_0=WEB
-PLUGINS_YOUTUBE_CLIENTS_1=MWEB
-PLUGINS_YOUTUBE_CLIENTS_2=TVHTML5EMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_0=MWEB
+PLUGINS_YOUTUBE_CLIENTS_1=WEB
+PLUGINS_YOUTUBE_CLIENTS_2=WEBEMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
 ```
 
 **推奨されるオプション - OAuth設定:**
 ```
 PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+# 最初のデバイスログイン成功後に追加:
+# PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...
+# オプション: OAuth互換クライアントが無いという警告が出る場合は、
+# 最後のフォールバックとして `TV` を追加:
+# PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
+
+ホスティング側が明示的に要求しない限り、環境変数の値に引用符は付けないでください。`TV` は再生時にサインインが必要で、`MUSIC` は通常再生より `ytmsearch` 向けです。
 
 リフレッシュトークンなしでOAuthを初めて有効にする場合:
 1. Lavalinkログでデバイスコードを確認（例: `XXX-XXX-XXX`）
@@ -213,12 +224,12 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.5.0"
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
       snapshot: false
   server:
     password: "youshallnotpass"
     sources:
-      youtube: true
+      youtube: false
       bandcamp: true
       soundcloud: true
       twitch: true
@@ -226,10 +237,28 @@ lavalink:
       http: true
       local: false
 
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - MWEB
+      - WEB
+      - WEBEMBEDDED
+      - ANDROID_VR
+    oauth:
+      enabled: true
+      # refreshToken: "paste your refresh token here"
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
+
 logging:
   level:
     root: INFO
     lavalink: INFO
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
 ```
 
 ## 🔧 トラブルシューティング
@@ -238,12 +267,16 @@ logging:
 - Lavalinkサーバーが実行中であることを確認
 - `LAVALINK_HOST`と`LAVALINK_PASSWORD`が正しいことを確認
 - Railwayでは公開URLではなく**内部URL**を使用
+- Lavalinkログに`Authentication failed`が出る場合、ボット側の`LAVALINK_PASSWORD`とLavalink側の`LAVALINK_SERVER_PASSWORD`が一致していません
 
 ### 曲が再生されない / 「サインインしてください」エラー
 - これはYouTubeによる自動化アクセスブロックの一般的な問題
 - **解決策1:** リモート暗号を有効化: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
 - **解決策2:** 使い捨てGoogleアカウントでOAuthを設定（上記ステップ3参照）
-- **解決策3:** 異なるクライアントを試す: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
+- **解決策3:** 再生向けクライアントを使う: `MWEB`, `WEB`, `WEBEMBEDDED`, `ANDROID_VR`
+- `TV` は再生時にサインインが必要なため、デフォルトクライアントとしては非推奨
+- OAuthを有効にしたまま「OAuth互換クライアントが無い」という警告が出る場合は、`TV` を最後のクライアントとしてのみ追加してください
+- `MUSIC` は通常再生より `ytmsearch` 向け
 - 詳細なエラーについてはLavalinkログを確認
 
 ### コマンドが表示されない
@@ -264,7 +297,7 @@ logging:
 - `isStartingUp`フラグは`ready`が発火した時のみクリアされます。`ready`が発火しない場合（例: Lavalinkに到達できない）、フラグは`true`のままになります。`LAVALINK_HOST`、`LAVALINK_PASSWORD`、`LAVALINK_SECURE`を確認してください。
 
 ### Railway: パブリックURLと内部URLの使い分け
-- **内部URL** (`*.railway.internal`): ポート`2333`を使用、`LAVALINK_SECURE=false`を設定
+- **内部URL** (`*.railway.internal`): Lavalink起動ログの実際の内部ポートを使用します。Railwayでは `8080` が一般的で、`LAVALINK_SECURE=false` を設定します
 - **パブリックURL** (`*.up.railway.app`): ポート`443`を使用、`LAVALINK_SECURE=true`を設定
 
 ### プレイヤーパネルが更新されない
@@ -284,7 +317,7 @@ logging:
 > **メンテナー向けメモ:** Shoukakuをアップグレードする場合は、`node_modules/shoukaku/src/Constants.ts`の`State`enum値を必ず確認してください。バージョンによって数値が異なります。現在の値（Shoukaku 4.x）: `CONNECTING=0`、`CONNECTED=1`、`DISCONNECTING=2`、`DISCONNECTED=3`。
 
 ### v2.1 - YouTube OAuthとリモート暗号（2025年12月）
-- 🔐 YouTube認証のOAuthサポート（「サインインしてください」エラーを回避）
+- 🔐 YouTube認証のOAuthサポート（「サインインしてください」エラーの一部を減らしますが、確実な回避策ではありません）
 - 🔧 リモート暗号サーバー統合（署名抽出問題を修正）
 - 📝 詳細なセットアップ手順でドキュメントを更新
 - 🎵 より信頼性の高いYouTube再生

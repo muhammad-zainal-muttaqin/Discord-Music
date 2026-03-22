@@ -8,6 +8,23 @@ function fail(code, message) {
     return { ok: false, code, message };
 }
 
+function looksLikeUrl(input) {
+    if (typeof input !== 'string') return false;
+    const value = input.trim();
+    if (!value) return false;
+
+    if (/^(https?:\/\/|www\.)/i.test(value)) {
+        return true;
+    }
+
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
 function createActions(runtime) {
     async function ensurePlayableGuild(guildId) {
         const gate = runtime.getPlaybackGate(guildId);
@@ -30,6 +47,7 @@ function createActions(runtime) {
 
             let player = runtime.getLivePlayer(guild.id);
             let createdPlayer = false;
+            const isDirectUrl = looksLikeUrl(query);
 
             try {
                 if (!player) {
@@ -58,7 +76,11 @@ function createActions(runtime) {
                         player.queue.add(track);
                     }
                 } else {
-                    player.queue.add(result.tracks[0]);
+                    const primaryTrack = result.tracks[0];
+                    if (!isDirectUrl) {
+                        runtime.registerSearchFallbacks(primaryTrack, result.tracks.slice(1, 6), query);
+                    }
+                    player.queue.add(primaryTrack);
                 }
 
                 const wasPlaying = player.playing;

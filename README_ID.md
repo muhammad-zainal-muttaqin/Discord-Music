@@ -103,12 +103,12 @@ Requested by: Username
 
 ```
 DISCORD_TOKEN=your_discord_bot_token
-LAVALINK_HOST=lavalink.railway.internal:2333
+LAVALINK_HOST=lavalink.railway.internal:8080
 LAVALINK_PASSWORD=mysecretpassword
 LAVALINK_SECURE=false
 ```
 
-> **Note**: Ganti `lavalink.railway.internal` dengan hostname internal dari Lavalink service Anda.
+> **Note**: Ganti `lavalink.railway.internal` dengan hostname internal dari Lavalink service Anda, dan gunakan port internal aktual yang terlihat di log startup Lavalink. Di Railway biasanya `8080`.
 
 5. Deploy!
 
@@ -119,17 +119,28 @@ Untuk memperbaiki error "This video requires login" atau "Please sign in", tamba
 **Wajib untuk YouTube playback:**
 ```
 PLUGINS_YOUTUBE_ENABLED=true
+PLUGINS_YOUTUBE_ALLOWSEARCH=true
+PLUGINS_YOUTUBE_ALLOWDIRECTVIDEOIDS=true
+PLUGINS_YOUTUBE_ALLOWDIRECTPLAYLISTIDS=true
 PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
 PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
-PLUGINS_YOUTUBE_CLIENTS_0=WEB
-PLUGINS_YOUTUBE_CLIENTS_1=MWEB
-PLUGINS_YOUTUBE_CLIENTS_2=TVHTML5EMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_0=MWEB
+PLUGINS_YOUTUBE_CLIENTS_1=WEB
+PLUGINS_YOUTUBE_CLIENTS_2=WEBEMBEDDED
+PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
 ```
 
 **Opsional tapi direkomendasikan - Setup OAuth:**
 ```
 PLUGINS_YOUTUBE_OAUTH_ENABLED=true
+# Tambahkan setelah login device pertama berhasil:
+# PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...
+# Opsional: jika Lavalink memberi warning bahwa OAuth aktif tapi tidak ada client yang kompatibel,
+# tambahkan TV sebagai fallback paling akhir:
+# PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
+
+Gunakan nilai mentah di panel hosting kecuali platform Anda memang meminta tanda kutip. Hindari `TV` sebagai client default karena playback-nya memang butuh sign-in, dan hindari `MUSIC` untuk playback normal karena lebih cocok untuk `ytmsearch`.
 
 Saat pertama kali mengaktifkan OAuth tanpa refresh token:
 1. Cek log Lavalink untuk device code (seperti `XXX-XXX-XXX`)
@@ -212,12 +223,12 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.5.0"
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
       snapshot: false
   server:
     password: "youshallnotpass"
     sources:
-      youtube: true
+      youtube: false
       bandcamp: true
       soundcloud: true
       twitch: true
@@ -225,10 +236,28 @@ lavalink:
       http: true
       local: false
 
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - MWEB
+      - WEB
+      - WEBEMBEDDED
+      - ANDROID_VR
+    oauth:
+      enabled: true
+      # refreshToken: "paste your refresh token here"
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
+
 logging:
   level:
     root: INFO
     lavalink: INFO
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
 ```
 
 ## 🔧 Troubleshooting
@@ -237,12 +266,16 @@ logging:
 - Pastikan Lavalink server berjalan
 - Cek `LAVALINK_HOST` dan `LAVALINK_PASSWORD` sudah benar
 - Di Railway, gunakan **internal URL** bukan public URL
+- Jika log Lavalink menampilkan `Authentication failed`, berarti `LAVALINK_PASSWORD` di bot tidak sama dengan `LAVALINK_SERVER_PASSWORD` di service Lavalink
 
 ### Lagu tidak bisa diputar / Error "Please sign in"
 - Ini masalah umum karena YouTube memblokir akses otomatis
 - **Solusi 1:** Aktifkan remote cipher: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
 - **Solusi 2:** Setup OAuth dengan akun Google burner (lihat Langkah 3 di atas)
-- **Solusi 3:** Coba client berbeda: `WEB`, `MWEB`, `TVHTML5EMBEDDED`
+- **Solusi 3:** Pakai client yang fokus ke playback: `MWEB`, `WEB`, `WEBEMBEDDED`, `ANDROID_VR`
+- Hindari `TV` sebagai client default karena playback-nya memang butuh sign-in
+- Jika OAuth tetap aktif dan Lavalink memberi warning bahwa tidak ada client OAuth-compatible, tambahkan `TV` hanya sebagai client terakhir
+- Hindari `MUSIC` untuk playback normal karena lebih cocok untuk `ytmsearch`
 - Cek logs Lavalink untuk error detail
 
 ### Lavalink 4.2.x `Bad Request`: `channelId` wajib ada
@@ -274,7 +307,7 @@ logging:
 - Flag `isStartingUp` hanya dikosongkan saat `ready` terpicu. Jika `ready` tidak pernah terpicu (misal Lavalink tidak bisa diakses), flag tetap `true`. Periksa `LAVALINK_HOST`, `LAVALINK_PASSWORD`, dan `LAVALINK_SECURE`.
 
 ### Railway: penggunaan public URL vs internal URL
-- **Internal URL** (`*.railway.internal`): gunakan port `2333`, set `LAVALINK_SECURE=false`
+- **Internal URL** (`*.railway.internal`): gunakan port internal aktual dari log startup Lavalink, biasanya `8080`, dan set `LAVALINK_SECURE=false`
 - **Public URL** (`*.up.railway.app`): gunakan port `443`, set `LAVALINK_SECURE=true`
 
 ### Panel player tidak update
@@ -294,7 +327,7 @@ logging:
 > **Catatan untuk maintainer:** Jika Anda upgrade Shoukaku, selalu verifikasi nilai enum `State` di `node_modules/shoukaku/src/Constants.ts`. Angkanya berbeda antar versi. Nilai saat ini (Shoukaku 4.x): `CONNECTING=0`, `CONNECTED=1`, `DISCONNECTING=2`, `DISCONNECTED=3`.
 
 ### v2.1 - YouTube OAuth & Remote Cipher (Desember 2025)
-- 🔐 Dukungan OAuth untuk autentikasi YouTube (bypass error "Please sign in")
+- 🔐 Dukungan OAuth untuk autentikasi YouTube (mengurangi sebagian error "Please sign in", tapi bukan bypass yang dijamin)
 - 🔧 Integrasi remote cipher server (fix masalah signature extraction)
 - 📝 Dokumentasi diperbarui dengan panduan setup detail
 - 🎵 Playback YouTube lebih reliable
