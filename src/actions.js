@@ -68,7 +68,7 @@ function createActions(runtime) {
                         await runtime.safeDestroyPlayer(guild.id, player, { allowForce: true });
                     }
                     runtime.setGuildStatus(guild.id, 'idle');
-                    return fail('no-results', 'âŒ No results found!');
+                    return fail('no-results', 'No results found.');
                 }
 
                 if (result.type === 'PLAYLIST') {
@@ -107,7 +107,7 @@ function createActions(runtime) {
                 });
             } catch (error) {
                 runtime.setGuildStatus(guild.id, 'failed', toErrorMessage(error));
-                return fail('error', `âŒ Error: ${toErrorMessage(error)}`);
+                return fail('error', `Error: ${toErrorMessage(error)}`);
             }
         },
 
@@ -133,7 +133,7 @@ function createActions(runtime) {
                 return ok({ player });
             } catch (error) {
                 runtime.setGuildStatus(guild.id, 'failed', toErrorMessage(error));
-                return fail('error', `âŒ Failed to join: ${toErrorMessage(error)}`);
+                return fail('error', `Failed to join: ${toErrorMessage(error)}`);
             }
         },
 
@@ -151,7 +151,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'pause', () => player.pause(true), { throwOnError: false });
-            if (!result.ok) return fail(result.reason, 'âŒ Failed to pause. Please try again.');
+            if (!result.ok) return fail(result.reason, 'Failed to pause. Please try again.');
             runtime.setGuildStatus(player.guildId, 'paused');
             runtime.clearPlayerInterval(player.guildId);
             await runtime.updatePlayerMessage(player);
@@ -163,7 +163,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'resume', () => player.pause(false), { throwOnError: false });
-            if (!result.ok) return fail(result.reason, 'âŒ Failed to resume. Please try again.');
+            if (!result.ok) return fail(result.reason, 'Failed to resume. Please try again.');
             runtime.setGuildStatus(player.guildId, 'playing');
             runtime.startPlayerInterval(player);
             await runtime.updatePlayerMessage(player);
@@ -175,7 +175,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
-            return result.ok ? ok() : fail(result.reason, 'âŒ Failed to skip. Please try again.');
+            return result.ok ? ok() : fail(result.reason, 'Failed to skip. Please try again.');
         },
 
         async stop(player) {
@@ -192,7 +192,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'restart', () => player.seek(0), { throwOnError: false });
-            if (!result.ok) return fail(result.reason, 'âŒ Failed to restart track.');
+            if (!result.ok) return fail(result.reason, 'Failed to restart track.');
             await runtime.updatePlayerMessage(player);
             return ok();
         },
@@ -202,7 +202,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'setVolume', () => player.setVolume(level), { throwOnError: false });
-            if (!result.ok) return fail(result.reason, 'âŒ Failed to set volume. Please try again.');
+            if (!result.ok) return fail(result.reason, 'Failed to set volume. Please try again.');
             await runtime.updatePlayerMessage(player);
             return ok({ level });
         },
@@ -226,7 +226,7 @@ function createActions(runtime) {
             if (!gate.ok) return gate;
 
             const result = await runtime.safePlayerAction(player, 'setLoop', () => player.setLoop(mode), { throwOnError: false });
-            if (!result.ok) return fail(result.reason, 'âŒ Failed to set loop mode.');
+            if (!result.ok) return fail(result.reason, 'Failed to set loop mode.');
             await runtime.updatePlayerMessage(player);
             return ok({ mode });
         },

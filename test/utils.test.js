@@ -10,7 +10,7 @@ test('formatDuration handles zero and hours', () => {
 });
 
 test('createProgressBar clamps values and normalizeVoiceEndpoint strips protocol', () => {
-    assert.equal(createProgressBar(0, 0, 5), '🔘▬▬▬▬');
-    assert.equal(createProgressBar(500, 1000, 5), '▬▬▬🔘▬');
+    assert.equal(createProgressBar(0, 0, 5), '░░░░░');
+    assert.equal(createProgressBar(500, 1000, 5), '███░░');
     assert.equal(normalizeVoiceEndpoint('wss://example.discord.media/'), 'example.discord.media');
 });
