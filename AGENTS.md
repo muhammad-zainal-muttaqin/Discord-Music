@@ -128,6 +128,10 @@ If changing UI/components:
 - read `src/interactions.js`
 - keep button/select IDs aligned with handlers
 
+## Lavalink (hosted)
+- Self-hosted Lavalink should use the official **[youtube-source](https://github.com/lavalink-devs/youtube-source)** plugin with built-in `sources.youtube: false`.
+- Recommended client order for **`youtube-plugin` 1.18+**: start with **`TVHTML5_SIMPLY`**, then fall back to `WEB`, `WEBEMBEDDED`, `ANDROID_VR`, and optionally `TV` last when OAuth is enabled. See [README.md](README.md) § Railway / YouTube plugin.
+
 ## Run / Verify
 - Install: `npm install`
 - Start: `npm start`

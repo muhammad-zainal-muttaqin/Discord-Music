@@ -114,9 +114,11 @@ LAVALINK_SECURE=false
 
 ### ステップ3: YouTubeプラグインを設定（重要！）
 
-「この動画はログインが必要です」や「サインインしてください」エラーを修正するために、**Lavalink**サービスにこれらの環境変数を追加:
+公式の **[youtube-source](https://github.com/lavalink-devs/youtube-source)** プラグインを使用してください（Lavalink標準のYouTubeソースではありません）。**`youtube-plugin` 1.18.0 以降**では、クライアント一覧の**先頭に `TVHTML5_SIMPLY`** を置くことを推奨します。非推奨の TV 埋め込みクライアントの後継で、「all clients failed」等の改善が報告されています（[1.18.0 リリースノート](https://github.com/lavalink-devs/youtube-source/releases/tag/1.18.0)）。
 
-**YouTube再生に必須:**
+**Lavalink** サービスに次の環境変数を追加:
+
+**YouTube再生に必須（推奨クライアント順）:**
 ```
 PLUGINS_YOUTUBE_ENABLED=true
 PLUGINS_YOUTUBE_ALLOWSEARCH=true
@@ -124,23 +126,29 @@ PLUGINS_YOUTUBE_ALLOWDIRECTVIDEOIDS=true
 PLUGINS_YOUTUBE_ALLOWDIRECTPLAYLISTIDS=true
 PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
 PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
-PLUGINS_YOUTUBE_CLIENTS_0=MWEB
+LAVALINK_PLUGINS_0_DEPENDENCY=dev.lavalink.youtube:youtube-plugin:1.18.0
+LAVALINK_PLUGINS_0_SNAPSHOT=false
+LAVALINK_DEFAULT_PLUGIN_REPOSITORY=https://maven.lavalink.dev/releases
+LAVALINK_SERVER_SOURCES_YOUTUBE=false
+PLUGINS_YOUTUBE_CLIENTS_0=TVHTML5_SIMPLY
 PLUGINS_YOUTUBE_CLIENTS_1=WEB
 PLUGINS_YOUTUBE_CLIENTS_2=WEBEMBEDDED
 PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
+PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
 
-**推奨されるオプション - OAuth設定:**
+**推奨 - OAuth設定:**
 ```
 PLUGINS_YOUTUBE_OAUTH_ENABLED=true
 # 最初のデバイスログイン成功後に追加:
 # PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...
-# オプション: OAuth互換クライアントが無いという警告が出る場合は、
-# 最後のフォールバックとして `TV` を追加:
-# PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
 
-ホスティング側が明示的に要求しない限り、環境変数の値に引用符は付けないでください。`TV` は再生時にサインインが必要で、`MUSIC` は通常再生より `ytmsearch` 向けです。
+`TV` は OAuth 利用時の最終フォールバック向けです（再生にサインインが必要な場合があります）。OAuth を使わない場合は `TV` を省略しても構いません。
+
+イメージにプラグインが**同梱済み**の場合は `LAVALINK_SERVER_SOURCES_YOUTUBE=false` と `PLUGINS_YOUTUBE_*` だけで足りることがあり、`LAVALINK_PLUGINS_*` の重複は避けてください。
+
+値に引用符は付けないでください（ホストが求める場合を除く）。通常の `youtube.com` / `ytsearch` では **`MUSIC` は `ytmsearch:` 向け**です。`MWEB` で 403 などが出る場合は、`TVHTML5_SIMPLY` / `WEB` の後に回すか外してください。
 
 リフレッシュトークンなしでOAuthを初めて有効にする場合:
 1. Lavalinkログでデバイスコードを確認（例: `XXX-XXX-XXX`）
@@ -244,10 +252,11 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - MWEB
+      - TVHTML5_SIMPLY
       - WEB
       - WEBEMBEDDED
       - ANDROID_VR
+      - TV
     oauth:
       enabled: true
       # refreshToken: "paste your refresh token here"
@@ -273,10 +282,14 @@ logging:
 - これはYouTubeによる自動化アクセスブロックの一般的な問題
 - **解決策1:** リモート暗号を有効化: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
 - **解決策2:** 使い捨てGoogleアカウントでOAuthを設定（上記ステップ3参照）
-- **解決策3:** 再生向けクライアントを使う: `MWEB`, `WEB`, `WEBEMBEDDED`, `ANDROID_VR`
-- `TV` は再生時にサインインが必要なため、デフォルトクライアントとしては非推奨
+- **解決策3:** **`youtube-plugin` 1.18.0+** を使い、`clients` の先頭を **`TVHTML5_SIMPLY`**、続けて `WEB`, `WEBEMBEDDED`, `ANDROID_VR`、OAuth 利用時は最後に `TV`（[youtube-source releases](https://github.com/lavalink-devs/youtube-source/releases)）
+- `TV` を**先頭**に置くのは非推奨（OAuth 前提のことが多い）
 - OAuthを有効にしたまま「OAuth互換クライアントが無い」という警告が出る場合は、`TV` を最後のクライアントとしてのみ追加してください
 - `MUSIC` は通常再生より `ytmsearch` 向け
+
+### 「All clients failed」/「This video requires payment to watch」
+- **有料・レンタル・Premium限定など:** Lavalink の設定では回避できません。別の動画や SoundCloud などを試してください。
+- **その他:** [最新の youtube-plugin](https://github.com/lavalink-devs/youtube-source/releases) に更新し、OAuth のリフレッシュトークンを確認し、リモート cipher がプラグイン版と合っているか確認してください。
 - 詳細なエラーについてはLavalinkログを確認
 
 ### コマンドが表示されない

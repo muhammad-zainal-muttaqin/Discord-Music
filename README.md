@@ -114,9 +114,11 @@ LAVALINK_SECURE=false
 
 ### Step 3: Configure YouTube Plugin (Important!)
 
-To fix "This video requires login" or "Please sign in" errors, add these environment variables to your **Lavalink** service:
+Use the official **[youtube-source](https://github.com/lavalink-devs/youtube-source)** plugin (not Lavalink’s built-in YouTube source). With **`youtube-plugin` 1.18.0+**, put **`TVHTML5_SIMPLY` first** in the client list: it replaces deprecated TV embedded clients and often fixes “all clients failed” / flaky playback. See the [1.18.0 release notes](https://github.com/lavalink-devs/youtube-source/releases/tag/1.18.0).
 
-**Required for YouTube playback:**
+Add these environment variables to your **Lavalink** service:
+
+**Required for YouTube playback (recommended client order):**
 ```
 PLUGINS_YOUTUBE_ENABLED=true
 PLUGINS_YOUTUBE_ALLOWSEARCH=true
@@ -124,10 +126,15 @@ PLUGINS_YOUTUBE_ALLOWDIRECTVIDEOIDS=true
 PLUGINS_YOUTUBE_ALLOWDIRECTPLAYLISTIDS=true
 PLUGINS_YOUTUBE_REMOTECIPHER_ENABLED=true
 PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/
-PLUGINS_YOUTUBE_CLIENTS_0=MWEB
+LAVALINK_PLUGINS_0_DEPENDENCY=dev.lavalink.youtube:youtube-plugin:1.18.0
+LAVALINK_PLUGINS_0_SNAPSHOT=false
+LAVALINK_DEFAULT_PLUGIN_REPOSITORY=https://maven.lavalink.dev/releases
+LAVALINK_SERVER_SOURCES_YOUTUBE=false
+PLUGINS_YOUTUBE_CLIENTS_0=TVHTML5_SIMPLY
 PLUGINS_YOUTUBE_CLIENTS_1=WEB
 PLUGINS_YOUTUBE_CLIENTS_2=WEBEMBEDDED
 PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
+PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
 
 **Optional but recommended - OAuth setup:**
@@ -135,12 +142,13 @@ PLUGINS_YOUTUBE_CLIENTS_3=ANDROID_VR
 PLUGINS_YOUTUBE_OAUTH_ENABLED=true
 # Add after the first successful device login:
 # PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN=1//...
-# Optional: if Lavalink warns that OAuth is enabled without any OAuth-compatible clients,
-# add TV as a last-resort fallback client:
-# PLUGINS_YOUTUBE_CLIENTS_4=TV
 ```
 
-Use raw values in your hosting panel unless it explicitly requires quotes. Avoid `TV` as a default client because playback requires sign-in, and avoid `MUSIC` for normal playback because it is mainly useful for `ytmsearch`.
+`TV` is listed last as a fallback when OAuth is enabled (playback may require sign-in for that client). Omit `TV` if you do not use OAuth and Lavalink does not warn about missing OAuth-capable clients.
+
+If your Lavalink deployment **already bundles** the YouTube plugin, you may only need `LAVALINK_SERVER_SOURCES_YOUTUBE=false` plus the `PLUGINS_YOUTUBE_*` lines (skip duplicate `LAVALINK_PLUGINS_*` if the image sets them).
+
+Use raw values in your hosting panel unless it explicitly requires quotes. Avoid `MUSIC` for normal `youtube.com` / `ytsearch` playback because it is mainly for **`ytmsearch:`** (YouTube Music search). If you still have issues with **`MWEB`**, try moving it after `TVHTML5_SIMPLY` / `WEB` or removing it (some networks see 403s on MWEB).
 
 When you first enable OAuth without a refresh token:
 1. Check Lavalink logs for a device code (like `XXX-XXX-XXX`)
@@ -243,10 +251,11 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - MWEB
+      - TVHTML5_SIMPLY
       - WEB
       - WEBEMBEDDED
       - ANDROID_VR
+      - TV
     oauth:
       enabled: true
       # refreshToken: "paste your refresh token here"
@@ -272,11 +281,15 @@ logging:
 - This is a common issue with YouTube blocking automated access
 - **Solution 1:** Enable remote cipher: `PLUGINS_YOUTUBE_REMOTECIPHER_URL=https://cipher.kikkia.dev/`
 - **Solution 2:** Setup OAuth with a burner Google account (see Step 3 above)
-- **Solution 3:** Use playback-oriented clients: `MWEB`, `WEB`, `WEBEMBEDDED`, `ANDROID_VR`
-- Avoid `TV` as your default client because it requires sign-in for playback
+- **Solution 3:** Use **`youtube-plugin` 1.18.0+** and put **`TVHTML5_SIMPLY` first** in `clients`, then `WEB`, `WEBEMBEDDED`, `ANDROID_VR`, and optionally `TV` last if using OAuth ([youtube-source releases](https://github.com/lavalink-devs/youtube-source/releases))
+- Avoid `TV` as the **first** client unless you rely on OAuth; it often needs sign-in for playback
 - If you keep OAuth enabled and Lavalink warns that no OAuth-compatible clients are registered, add `TV` as the last client only
 - Avoid `MUSIC` for normal playback because it is mainly useful for `ytmsearch`
 - Check Lavalink logs for detailed errors
+
+### "All clients failed" / "This video requires payment to watch"
+- **Payment / rental / Premium-gated videos:** YouTube cannot be bypassed with Lavalink config; try another track or another source (e.g. SoundCloud).
+- **Other failures:** Update `dev.lavalink.youtube:youtube-plugin` to the [latest release](https://github.com/lavalink-devs/youtube-source/releases), refresh OAuth tokens if expired, and ensure remote cipher URL matches your plugin version.
 
 ### Lavalink 4.2.x `Bad Request`: `channelId` is required
 - Symptom in Lavalink logs: `Field 'channelId' is required ... missing at path: $.voice`
