@@ -1,4 +1,4 @@
-# 🎵 Discord音楽ボット
+﻿# 🎵 Discord音楽ボット
 
 **🌐 Language: [English](README.md) | [Indonesia](README_ID.md) | [日本語](README_jp.md)**
 
@@ -28,13 +28,11 @@ Lavalinkを搭載した高品質な音声ストリーミング対応の機能豊
   - 🔀 シャッフル
   - 🔉/🔊 音量下げ/上げ
   - 🔁 ループ（アクティブ時に色変更）
-  - ❤️ お気に入り
   - 📋 キューを表示
 
 ### 📀 ドロップダウンメニュー
 - **キュートラックを表示** - キュー内の最大25トラックを閲覧
 - **その他の機能:**
-  - 📍 位置へシーク（説明）
   - 🎵 詳細なNow Playing情報
   - 🗑️ キューをクリア
   - 🔄 トラックを再開
@@ -78,7 +76,7 @@ Requested by: Username
 🎶 Queue: 3 tracks remaining • Volume: 80% • ▶️ Playing
 ─────────────────────────────────
 [⏮️] [⏸️] [⏭️] [⏹️] [🔀]
-[🔉] [🔊] [🔁] [❤️] [📋]
+[🔉] [🔊] [🔁] [📋]
 [📀 View Queue Tracks (3)      ▼]
 [⚡ More Features...           ▼]
 ```
@@ -148,7 +146,7 @@ PLUGINS_YOUTUBE_OAUTH_ENABLED=true
 
 イメージにプラグインが**同梱済み**の場合は `LAVALINK_SERVER_SOURCES_YOUTUBE=false` と `PLUGINS_YOUTUBE_*` だけで足りることがあり、`LAVALINK_PLUGINS_*` の重複は避けてください。
 
-値に引用符は付けないでください（ホストが求める場合を除く）。通常の `youtube.com` / `ytsearch` では **`MUSIC` は `ytmsearch:` 向け**です。`MWEB` で 403 などが出る場合は、`TVHTML5_SIMPLY` / `WEB` の後に回すか外してください。
+値に引用符は付けないでください（ホストが求める場合を除く）。通常の `youtube.com` / `ytsearch` では **`MUSIC` は `ytmsearch:` 向け**です。
 
 リフレッシュトークンなしでOAuthを初めて有効にする場合:
 1. Lavalinkログでデバイスコードを確認（例: `XXX-XXX-XXX`）
@@ -211,14 +209,18 @@ npm start
 
 ```
 Discord-Music/
-├── index.js          # プレイヤーパネル搭載のメインボットファイル
-├── package.json      # 依存関係
-├── .env              # 環境変数（コミットしないでください！）
-├── .env.example      # 環境変数テンプレート
-├── .gitignore        # Git無視ルール
-├── README.md         # 英語ドキュメント
-├── README_ID.md      # インドネシア語ドキュメント
-└── README_jp.md      # 日本語ドキュメント
+├── index.js                 # ./src を読み込む薄いブートストラップ
+├── src/
+│   ├── index.js             # Client、config、command、interaction の設定
+│   ├── actions.js           # 共通 playback mutation
+│   ├── interactions.js      # Slash command と component routing
+│   ├── music/
+│   │   ├── runtime.js       # Lavalink/Kazagumo lifecycle と recovery
+│   │   └── compat.js        # Shoukaku/Lavalink voice 互換処理
+│   └── ui/playerView.js     # Player embed と component
+├── test/                    # Node test suite
+├── package.json             # 依存関係
+└── discord-music-env.txt    # Lavalink hosting environment 例
 ```
 
 ## ⚙️ Lavalink設定（オプション）
@@ -300,8 +302,8 @@ logging:
 - ボットが`Manage Messages`権限を持っていることを確認
 
 ### `/play`のたびに「The music service is temporarily unavailable」
-- Shoukakuのstate値の誤りが原因です。Shoukaku 4.xは`CONNECTED=1`を使用しており、`2`ではありません。`index.js`の`isNodeStateConnected()`が`state === 1`を確認しているか確認してください。
-- Shoukakuをアップグレードした場合は、`Constants.ts`の`State`enumを必ず確認してください。
+- [`src/music/runtime.js`](src/music/runtime.js) の `isNodeStateConnected()` を確認してください。Shoukaku 4.x は接続済み node を `CONNECTED=1` として報告します。
+- Shoukaku をアップグレードする場合は、recovery gating を変更する前に node state semantics を確認してください。
 
 ### ボットが再接続でスタック / Lavalinkドロップ後に回復しない
 - `close`イベントが`isReconnecting=true`を設定し、`attemptReconnect()`もブロックしていたことが原因です。現在は別の`reconnectAttemptInProgress` mutexで修正されています。
@@ -327,7 +329,7 @@ logging:
 - ✨ **よりスマートな`/play`ステータスメッセージ** — ボットはコンテキストに応じたメッセージを表示: 初回起動時は「still starting up」、セッション中のドロップ時は「lost connection and is reconnecting」、その他の場合は「temporarily unavailable」。
 - ✨ **`isStartingUp`フラグ** — 初回起動とセッション中の再接続を区別し、ユーザーに正確なステータスメッセージを提供します。
 
-> **メンテナー向けメモ:** Shoukakuをアップグレードする場合は、`node_modules/shoukaku/src/Constants.ts`の`State`enum値を必ず確認してください。バージョンによって数値が異なります。現在の値（Shoukaku 4.x）: `CONNECTING=0`、`CONNECTED=1`、`DISCONNECTING=2`、`DISCONNECTED=3`。
+> **メンテナー向けメモ:** Shoukaku または Kazagumo をアップグレードする場合は、[`src/music/runtime.js`](src/music/runtime.js) または [`src/music/compat.js`](src/music/compat.js) を変更する前に node state semantics と voice update payload を確認してください。
 
 ### v2.1 - YouTube OAuthとリモート暗号（2025年12月）
 - 🔐 YouTube認証のOAuthサポート（「サインインしてください」エラーの一部を減らしますが、確実な回避策ではありません）

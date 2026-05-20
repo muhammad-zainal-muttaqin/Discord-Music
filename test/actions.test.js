@@ -14,6 +14,10 @@ function createRuntimeStub(gate = { ok: true }) {
         setGuildStatus: () => {},
         clearPlayerInterval: () => {},
         startPlayerInterval: () => {},
+        setPlayerPaused: async (player, paused) => player.pause(paused),
+        stopPlayerTrack: async player => player.skip(),
+        seekPlayer: async (player, position) => player.seek(position),
+        setPlayerVolume: async (player, level) => player.setVolume(level),
         invalidateSnapshot: () => {},
         markSuppressEmptyNotice: () => {},
         clearPlayerMessage: () => {},
@@ -160,4 +164,62 @@ test('setVolume and setLoop use safePlayerAction when mutations are allowed', as
     assert.deepEqual(actionNames, ['setVolume', 'setLoop']);
     assert.deepEqual(player.setVolumeCalls, [60]);
     assert.deepEqual(player.setLoopCalls, ['queue']);
+});
+
+test('async player mutations are awaited through runtime wrappers', async () => {
+    const runtime = createRuntimeStub();
+    const events = [];
+    runtime.safePlayerAction = async (_player, actionName, fn) => {
+        events.push(`${actionName}:start`);
+        await fn();
+        events.push(`${actionName}:done`);
+        return { ok: true };
+    };
+    runtime.setPlayerPaused = async (player, paused) => {
+        await Promise.resolve();
+        player.pause(paused);
+        events.push(`paused:${paused}`);
+    };
+    runtime.stopPlayerTrack = async player => {
+        await Promise.resolve();
+        player.skip();
+        events.push('stopped');
+    };
+    runtime.seekPlayer = async (player, position) => {
+        await Promise.resolve();
+        player.seek(position);
+        events.push(`seek:${position}`);
+    };
+    runtime.setPlayerVolume = async (player, level) => {
+        await Promise.resolve();
+        player.setVolume(level);
+        events.push(`volume:${level}`);
+    };
+
+    const actions = createActions(runtime);
+    const player = createPlayer();
+
+    await actions.pause(player);
+    await actions.resume(player);
+    await actions.skip(player);
+    await actions.restart(player);
+    await actions.setVolume(player, 65);
+
+    assert.deepEqual(events, [
+        'pause:start',
+        'paused:true',
+        'pause:done',
+        'resume:start',
+        'paused:false',
+        'resume:done',
+        'skip:start',
+        'stopped',
+        'skip:done',
+        'restart:start',
+        'seek:0',
+        'restart:done',
+        'setVolume:start',
+        'volume:65',
+        'setVolume:done'
+    ]);
 });

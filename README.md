@@ -1,4 +1,4 @@
-# 🎵 Discord Music Bot
+﻿# 🎵 Discord Music Bot
 
 **🌐 Language: [English](README.md) | [Indonesia](README_ID.md) | [日本語](README_jp.md)**
 
@@ -28,13 +28,11 @@ A feature-rich Discord music bot powered by Lavalink for high-quality audio stre
   - 🔀 Shuffle
   - 🔉/🔊 Volume Down/Up
   - 🔁 Loop (changes color when active)
-  - ❤️ Favorite
   - 📋 View Queue
 
 ### 📀 Dropdown Menus
 - **View Queue Tracks** - Browse up to 25 tracks in queue
 - **More Features:**
-  - 📍 Seek to position (instructions)
   - 🎵 Detailed Now Playing info
   - 🗑️ Clear Queue
   - 🔄 Restart Track
@@ -78,7 +76,7 @@ Requested by: Username
 🎶 Queue: 3 tracks remaining • Volume: 80% • ▶️ Playing
 ─────────────────────────────────
 [⏮️] [⏸️] [⏭️] [⏹️] [🔀]
-[🔉] [🔊] [🔁] [❤️] [📋]
+[🔉] [🔊] [🔁] [📋]
 [📀 View Queue Tracks (3)      ▼]
 [⚡ More Features...           ▼]
 ```
@@ -148,7 +146,7 @@ PLUGINS_YOUTUBE_OAUTH_ENABLED=true
 
 If your Lavalink deployment **already bundles** the YouTube plugin, you may only need `LAVALINK_SERVER_SOURCES_YOUTUBE=false` plus the `PLUGINS_YOUTUBE_*` lines (skip duplicate `LAVALINK_PLUGINS_*` if the image sets them).
 
-Use raw values in your hosting panel unless it explicitly requires quotes. Avoid `MUSIC` for normal `youtube.com` / `ytsearch` playback because it is mainly for **`ytmsearch:`** (YouTube Music search). If you still have issues with **`MWEB`**, try moving it after `TVHTML5_SIMPLY` / `WEB` or removing it (some networks see 403s on MWEB).
+Use raw values in your hosting panel unless it explicitly requires quotes. Avoid `MUSIC` for normal `youtube.com` / `ytsearch` playback because it is mainly for **`ytmsearch:`** (YouTube Music search).
 
 When you first enable OAuth without a refresh token:
 1. Check Lavalink logs for a device code (like `XXX-XXX-XXX`)
@@ -211,13 +209,18 @@ npm start
 
 ```
 Discord-Music/
-├── index.js          # Main bot file with player panel
-├── package.json      # Dependencies
-├── .env              # Environment variables (do not commit!)
-├── .env.example      # Template environment variables
-├── .gitignore        # Git ignore rules
-├── README.md         # English documentation
-└── README_ID.md      # Indonesian documentation
+├── index.js                 # Thin bootstrap that loads ./src
+├── src/
+│   ├── index.js             # Client setup, config, commands, interactions
+│   ├── actions.js           # Shared playback mutations
+│   ├── interactions.js      # Slash command and component routing
+│   ├── music/
+│   │   ├── runtime.js       # Lavalink/Kazagumo lifecycle and recovery
+│   │   └── compat.js        # Guarded Shoukaku/Lavalink voice compatibility
+│   └── ui/playerView.js     # Player embeds and components
+├── test/                    # Node test suite
+├── package.json             # Dependencies
+└── discord-music-env.txt    # Example Lavalink hosting environment
 ```
 
 ## ⚙️ Lavalink Configuration (Optional)
@@ -294,7 +297,7 @@ logging:
 ### Lavalink 4.2.x `Bad Request`: `channelId` is required
 - Symptom in Lavalink logs: `Field 'channelId' is required ... missing at path: $.voice`
 - Cause: player voice update payload is missing `voice.channelId`
-- This repository patches Shoukaku `sendServerUpdate` in [`index.js`](index.js) to include `channelId`
+- This repository keeps guarded Shoukaku voice compatibility in [`src/music/compat.js`](src/music/compat.js)
 - If you maintain a custom fork/client, ensure voice payload includes:
 - `voice.token`
 - `voice.endpoint`
@@ -310,8 +313,8 @@ logging:
 - Ensure the bot has `Manage Messages` permission
 
 ### "The music service is temporarily unavailable" on every `/play`
-- This was caused by a wrong Shoukaku state value. Shoukaku 4.x uses `CONNECTED=1`, not `2`. Check `isNodeStateConnected()` in `index.js` — it must check `state === 1`.
-- If you upgraded Shoukaku, always verify the `State` enum in its `Constants.ts`.
+- Check `isNodeStateConnected()` in [`src/music/runtime.js`](src/music/runtime.js). Shoukaku 4.x reports connected nodes as `CONNECTED=1`.
+- If you upgrade Shoukaku, verify node state semantics before changing recovery gating.
 
 ### Bot stuck reconnecting / never recovers after Lavalink drop
 - Caused by the `isReconnecting` flag being set by the `close` event, which also blocked `attemptReconnect()` from running. Now fixed with a separate `reconnectAttemptInProgress` mutex.
@@ -337,7 +340,7 @@ logging:
 - ✨ **Smarter `/play` status messages** — Bot now shows context-aware messages: "still starting up" on first boot, "lost connection and is reconnecting" on mid-session drops, or "temporarily unavailable" for other cases.
 - ✨ **`isStartingUp` flag** — Distinguishes fresh boot from mid-session reconnect so users get accurate status messages.
 
-> **Note for maintainers:** If you upgrade Shoukaku, always verify the `State` enum values in `node_modules/shoukaku/src/Constants.ts`. The state numbers differ between versions. Current values (Shoukaku 4.x): `CONNECTING=0`, `CONNECTED=1`, `DISCONNECTING=2`, `DISCONNECTED=3`.
+> **Note for maintainers:** If you upgrade Shoukaku or Kazagumo, verify node state semantics and voice update payloads before changing [`src/music/runtime.js`](src/music/runtime.js) or [`src/music/compat.js`](src/music/compat.js).
 
 ### v2.1 - YouTube OAuth & Remote Cipher (December 2025)
 - 🔐 OAuth support for YouTube authentication (reduces some "Please sign in" errors, but is not a guaranteed bypass)

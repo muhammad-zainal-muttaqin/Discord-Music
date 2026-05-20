@@ -1,5 +1,34 @@
 const { wait } = require('../utils');
 
+function getConnection(player, connection) {
+    return connection || player.node?.manager?.connections?.get?.(player.guildId) || null;
+}
+
+function buildVoicePayload(player, connection, normalizeVoiceEndpoint) {
+    const conn = getConnection(player, connection);
+    return {
+        token: conn?.serverUpdate?.token ?? null,
+        endpoint: normalizeVoiceEndpoint(conn?.serverUpdate?.endpoint ?? null),
+        sessionId: conn?.sessionId ?? null,
+        channelId: conn?.channelId ?? conn?.lastChannelId ?? null
+    };
+}
+
+function getMissingVoiceFields(voicePayload) {
+    return Object.entries(voicePayload)
+        .filter(([, value]) => !value)
+        .map(([key]) => key);
+}
+
+function isUpstreamSafeVoicePayload(connection, voicePayload) {
+    return (
+        connection?.serverUpdate?.token &&
+        connection?.serverUpdate?.endpoint === voicePayload.endpoint &&
+        connection?.sessionId &&
+        connection?.channelId
+    );
+}
+
 function applyShoukakuCompat({ kazagumo, PlayerClass, normalizeVoiceEndpoint, isPlayerUpdateBadRequest }) {
     const connector = kazagumo.shoukaku.connector;
     if (connector?.raw) {
@@ -16,19 +45,22 @@ function applyShoukakuCompat({ kazagumo, PlayerClass, normalizeVoiceEndpoint, is
         return;
     }
 
+    const upstreamSendServerUpdate = PlayerClass.prototype.sendServerUpdate;
+
     PlayerClass.prototype.__discordMusicCompatPatched = true;
     PlayerClass.prototype.sendServerUpdate = async function sendServerUpdate(connection) {
-        const conn = connection || this.node?.manager?.connections?.get?.(this.guildId);
-        const voicePayload = {
-            token: conn?.serverUpdate?.token ?? null,
-            endpoint: normalizeVoiceEndpoint(conn?.serverUpdate?.endpoint ?? null),
-            sessionId: conn?.sessionId ?? null,
-            channelId: conn?.channelId ?? conn?.lastChannelId ?? null
-        };
+        const conn = getConnection(this, connection);
+        const voicePayload = buildVoicePayload(this, conn, normalizeVoiceEndpoint);
+        const missing = getMissingVoiceFields(voicePayload);
 
-        const missing = Object.entries(voicePayload)
-            .filter(([, value]) => !value)
-            .map(([key]) => key);
+        if (missing.length === 0 && typeof upstreamSendServerUpdate === 'function' && isUpstreamSafeVoicePayload(conn, voicePayload)) {
+            try {
+                return await upstreamSendServerUpdate.call(this, conn);
+            } catch (error) {
+                if (!isPlayerUpdateBadRequest(error)) throw error;
+                await wait(700);
+            }
+        }
 
         if (missing.length > 0) {
             throw new Error(`[Voice] Incomplete voice state for guild ${this.guildId}. Missing: ${missing.join(', ')}`);
@@ -52,5 +84,8 @@ function applyShoukakuCompat({ kazagumo, PlayerClass, normalizeVoiceEndpoint, is
 }
 
 module.exports = {
-    applyShoukakuCompat
+    applyShoukakuCompat,
+    buildVoicePayload,
+    getMissingVoiceFields,
+    isUpstreamSafeVoicePayload
 };

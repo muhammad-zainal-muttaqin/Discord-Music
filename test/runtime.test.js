@@ -138,3 +138,68 @@ test('resumeGuild stops retrying after max attempts for a guild', async () => {
     assert.equal(state.status, 'failed');
     assert.equal(runtime.snapshots.has('guild-1'), false);
 });
+
+test('setPlayerPaused awaits Shoukaku mutation before updating local state', async () => {
+    const runtime = createRuntime();
+    const calls = [];
+    const player = {
+        paused: false,
+        playing: true,
+        queue: { totalSize: 1 },
+        shoukaku: {
+            setPaused: async value => {
+                calls.push(`remote:${value}`);
+                await Promise.resolve();
+                calls.push('remote:done');
+            }
+        }
+    };
+
+    await runtime.setPlayerPaused(player, true);
+    calls.push(`local:${player.paused}:${player.playing}`);
+
+    assert.deepEqual(calls, ['remote:true', 'remote:done', 'local:true:false']);
+});
+
+test('stopPlayerTrack awaits Shoukaku stopTrack', async () => {
+    const runtime = createRuntime();
+    const calls = [];
+    const player = {
+        shoukaku: {
+            stopTrack: async () => {
+                calls.push('remote:stop');
+                await Promise.resolve();
+                calls.push('remote:done');
+            }
+        }
+    };
+
+    await runtime.stopPlayerTrack(player);
+    calls.push('after');
+
+    assert.deepEqual(calls, ['remote:stop', 'remote:done', 'after']);
+});
+
+test('createPlayerWithRecovery applies initial volume through awaited runtime path', async () => {
+    const runtime = createRuntime();
+    const calls = [];
+    const createdPlayer = { guildId: 'guild-1', setVolume: async () => {} };
+    runtime.kazagumo.createPlayer = async options => {
+        calls.push(`create-volume:${options.volume}`);
+        return createdPlayer;
+    };
+    runtime.setPlayerVolume = async (player, level) => {
+        assert.equal(player, createdPlayer);
+        calls.push(`set-volume:${level}`);
+    };
+
+    const player = await runtime.createPlayerWithRecovery({
+        guildId: 'guild-1',
+        textId: 'text-1',
+        voiceId: 'voice-1',
+        volume: 30
+    }, 'Test');
+
+    assert.equal(player, createdPlayer);
+    assert.deepEqual(calls, ['create-volume:100', 'set-volume:30']);
+});

@@ -1,4 +1,6 @@
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { EmbedBuilder } = require('discord.js');
 const { Kazagumo, Plugins } = require('kazagumo');
 const { Connectors, Player } = require('shoukaku');
@@ -12,6 +14,22 @@ const {
     toErrorMessage
 } = require('./errors');
 const { applyShoukakuCompat } = require('./compat');
+
+function readDependencyVersion(packageName) {
+    try {
+        let currentPath = require.resolve(packageName);
+        while (currentPath && currentPath !== path.dirname(currentPath)) {
+            const packageJsonPath = path.join(currentPath, 'package.json');
+            if (fs.existsSync(packageJsonPath)) {
+                return JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version || 'unknown';
+            }
+            currentPath = path.dirname(currentPath);
+        }
+    } catch {
+        // Keep runtime startup resilient if package metadata is unavailable.
+    }
+    return 'unknown';
+}
 
 class MusicRuntime {
     constructor(client, config) {
@@ -40,6 +58,7 @@ class MusicRuntime {
             normalizeVoiceEndpoint,
             isPlayerUpdateBadRequest
         });
+        this.logRuntimeHealth();
 
         this.nodeStatus = 'starting';
         this.isStartingUp = true;
@@ -97,6 +116,17 @@ class MusicRuntime {
         return server;
     }
 
+    logRuntimeHealth() {
+        console.log(
+            `[Runtime] Versions: node=${process.version}, discord.js=${readDependencyVersion('discord.js')}, ` +
+            `kazagumo=${readDependencyVersion('kazagumo')}, shoukaku=${readDependencyVersion('shoukaku')}`
+        );
+        console.log(
+            `[Runtime] Lavalink target: name=${this.config.lavalink.name}, ` +
+            `url=${this.config.lavalink.url}, secure=${this.config.lavalink.secure === true}`
+        );
+    }
+
     bindProcessHandlers() {
         process.on('unhandledRejection', error => {
             if (isSessionError(error) || isAlreadyDestroyedError(error)) {
@@ -148,7 +178,6 @@ class MusicRuntime {
         });
 
         this.kazagumo.shoukaku.on('ready', name => {
-            console.log(`Lavalink node "${name}" connected.`);
             this.nodeStatus = 'ready';
             this.isStartingUp = false;
             this.reconnectInFlight = false;
@@ -156,6 +185,10 @@ class MusicRuntime {
             this.reconnectBackoffMs = 3000;
             this.clearReconnectTimer();
             this.clearReadyTimer();
+            const node = this.getMainNode();
+            console.log(
+                `Lavalink node "${name}" connected. state=${node?.state ?? 'unknown'}, session=${this.getNodeSessionId(node) || 'missing'}`
+            );
 
             for (const [guildId, snapshot] of this.snapshots) {
                 const state = this.getGuildState(guildId);
@@ -679,7 +712,7 @@ class MusicRuntime {
                     if (currentSnapshot && currentSnapshot.version !== expectedVersion) return;
                     const activePlayer = this.kazagumo.players.get(guildId);
                     if (!activePlayer?.queue.current) return;
-                    await this.safePlayerAction(activePlayer, 'resume-seek', () => activePlayer.seek(snapshot.position), { throwOnError: false });
+                    await this.safePlayerAction(activePlayer, 'resume-seek', () => this.seekPlayer(activePlayer, snapshot.position), { throwOnError: false });
                 }, 3000);
             }
 
@@ -755,9 +788,19 @@ class MusicRuntime {
 
     async createPlayerWithRecovery(options, context = 'Player') {
         let lastError;
+        const requestedVolume = Number.isFinite(options.volume) ? options.volume : null;
+        const createOptions = { ...options };
+        if (requestedVolume !== null && requestedVolume !== 100) {
+            createOptions.volume = 100;
+        }
+
         for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
-                return await this.kazagumo.createPlayer(options);
+                const player = await this.kazagumo.createPlayer(createOptions);
+                if (requestedVolume !== null && requestedVolume !== 100) {
+                    await this.setPlayerVolume(player, requestedVolume);
+                }
+                return player;
             } catch (error) {
                 lastError = error;
                 const message = String(error?.message || '').toLowerCase();
@@ -810,6 +853,38 @@ class MusicRuntime {
         }
     }
 
+    async setPlayerPaused(player, paused) {
+        if (player.paused === paused || !player.queue?.totalSize) {
+            return player;
+        }
+
+        if (typeof player.shoukaku?.setPaused === 'function') {
+            await player.shoukaku.setPaused(paused);
+            player.paused = paused;
+            player.playing = !paused;
+            return player;
+        }
+
+        return player.pause(paused);
+    }
+
+    async stopPlayerTrack(player) {
+        if (typeof player.shoukaku?.stopTrack === 'function') {
+            await player.shoukaku.stopTrack();
+            return player;
+        }
+
+        return player.skip();
+    }
+
+    async seekPlayer(player, position) {
+        return player.seek(position);
+    }
+
+    async setPlayerVolume(player, level) {
+        return player.setVolume(level);
+    }
+
     async safeDestroyPlayer(guildId, player, options = {}) {
         const { allowForce = false } = options;
         if (!player) return { ok: false, reason: 'missing-player' };
@@ -839,7 +914,7 @@ class MusicRuntime {
         }
 
         if (player.playing || player.queue.current) {
-            await this.safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
+            await this.safePlayerAction(player, 'skip', () => this.stopPlayerTrack(player), { throwOnError: false });
         }
     }
 
@@ -907,5 +982,6 @@ class MusicRuntime {
 }
 
 module.exports = {
-    MusicRuntime
+    MusicRuntime,
+    readDependencyVersion
 };

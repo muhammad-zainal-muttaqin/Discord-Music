@@ -150,7 +150,7 @@ function createActions(runtime) {
             const gate = await ensureMutablePlayback(player);
             if (!gate.ok) return gate;
 
-            const result = await runtime.safePlayerAction(player, 'pause', () => player.pause(true), { throwOnError: false });
+            const result = await runtime.safePlayerAction(player, 'pause', () => runtime.setPlayerPaused(player, true), { throwOnError: false });
             if (!result.ok) return fail(result.reason, 'Failed to pause. Please try again.');
             runtime.setGuildStatus(player.guildId, 'paused');
             runtime.clearPlayerInterval(player.guildId);
@@ -162,7 +162,7 @@ function createActions(runtime) {
             const gate = await ensureMutablePlayback(player);
             if (!gate.ok) return gate;
 
-            const result = await runtime.safePlayerAction(player, 'resume', () => player.pause(false), { throwOnError: false });
+            const result = await runtime.safePlayerAction(player, 'resume', () => runtime.setPlayerPaused(player, false), { throwOnError: false });
             if (!result.ok) return fail(result.reason, 'Failed to resume. Please try again.');
             runtime.setGuildStatus(player.guildId, 'playing');
             runtime.startPlayerInterval(player);
@@ -174,7 +174,7 @@ function createActions(runtime) {
             const gate = await ensureMutablePlayback(player);
             if (!gate.ok) return gate;
 
-            const result = await runtime.safePlayerAction(player, 'skip', () => player.skip(), { throwOnError: false });
+            const result = await runtime.safePlayerAction(player, 'skip', () => runtime.stopPlayerTrack(player), { throwOnError: false });
             return result.ok ? ok() : fail(result.reason, 'Failed to skip. Please try again.');
         },
 
@@ -191,7 +191,7 @@ function createActions(runtime) {
             const gate = await ensureMutablePlayback(player);
             if (!gate.ok) return gate;
 
-            const result = await runtime.safePlayerAction(player, 'restart', () => player.seek(0), { throwOnError: false });
+            const result = await runtime.safePlayerAction(player, 'restart', () => runtime.seekPlayer(player, 0), { throwOnError: false });
             if (!result.ok) return fail(result.reason, 'Failed to restart track.');
             await runtime.updatePlayerMessage(player);
             return ok();
@@ -201,7 +201,7 @@ function createActions(runtime) {
             const gate = await ensureMutablePlayback(player);
             if (!gate.ok) return gate;
 
-            const result = await runtime.safePlayerAction(player, 'setVolume', () => player.setVolume(level), { throwOnError: false });
+            const result = await runtime.safePlayerAction(player, 'setVolume', () => runtime.setPlayerVolume(player, level), { throwOnError: false });
             if (!result.ok) return fail(result.reason, 'Failed to set volume. Please try again.');
             await runtime.updatePlayerMessage(player);
             return ok({ level });
